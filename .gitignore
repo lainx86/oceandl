@@ -1,0 +1,13 @@
+/build
+/cmake-build-*/
+/dist
+/.pytest_cache
+/__pycache__
+/data
+/data_sst
+CMakeCache.txt
+CMakeFiles/
+Testing/
+*.cmake.user
+*.egg-info/
+*.pyc
