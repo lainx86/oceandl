@@ -1,4 +1,5 @@
 /build
+/build-*
 /cmake-build-*/
 /dist
 /.pytest_cache

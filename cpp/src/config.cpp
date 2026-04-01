@@ -11,6 +11,7 @@
 #include <toml++/toml.hpp>
 
 #include "builtin_datasets.hpp"
+#include "oceandl/models.hpp"
 #include "oceandl/utils.hpp"
 #include "oceandl/version.hpp"
 
@@ -187,8 +188,10 @@ void AppConfig::normalize_and_validate() {
     if (chunk_size < 1024) {
         throw std::invalid_argument("chunk_size must be at least 1024 bytes.");
     }
-    if (retry_count < 0) {
-        throw std::invalid_argument("retry_count must not be negative.");
+    if (retry_count < 0 || retry_count > kMaxRetryCount) {
+        throw std::invalid_argument(
+            "retry_count must be between 0 and " + std::to_string(kMaxRetryCount) + "."
+        );
     }
     if (user_agent.empty()) {
         user_agent = fmt::format("oceandl/{}", kVersion);

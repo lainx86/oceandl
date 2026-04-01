@@ -20,6 +20,7 @@ namespace oceandl {
 namespace {
 
 constexpr int kRetryableStatusCodes[] = {408, 429, 500, 502, 503, 504};
+constexpr int kMaxRetryBackoffSeconds = 8;
 
 bool is_retryable_status(int status_code) {
     for (int candidate : kRetryableStatusCodes) {
@@ -50,13 +51,27 @@ bool is_retryable_network_code(int code) {
     }
 }
 
+int bounded_retry_backoff_seconds(int attempt) {
+    if (attempt <= 1) {
+        return 1;
+    }
+
+    int wait_seconds = 1;
+    for (int current_attempt = 1;
+         current_attempt < attempt && wait_seconds < kMaxRetryBackoffSeconds;
+         ++current_attempt) {
+        wait_seconds = std::min(wait_seconds * 2, kMaxRetryBackoffSeconds);
+    }
+    return wait_seconds;
+}
+
 int retry_wait_seconds_for(const std::exception& error, int attempt) {
     if (const auto* http_error = dynamic_cast<const HttpStatusError*>(&error)) {
         if (http_error->retry_after_seconds().has_value()) {
             return std::max(1, *http_error->retry_after_seconds());
         }
     }
-    return std::min(1 << (attempt - 1), 8);
+    return bounded_retry_backoff_seconds(attempt);
 }
 
 class FileResponseHandler final : public ResponseHandler {
@@ -77,6 +92,10 @@ class FileResponseHandler final : public ResponseHandler {
     void on_response_start(const HttpResponse& response) override {
         response_ = response;
         if (response.status_code == 416) {
+            return;
+        }
+        if (response.status_code >= 400) {
+            discard_body_ = true;
             return;
         }
 
@@ -111,6 +130,9 @@ class FileResponseHandler final : public ResponseHandler {
     }
 
     bool on_chunk(std::string_view chunk) override {
+        if (discard_body_) {
+            return true;
+        }
         if (!stream_) {
             return false;
         }
@@ -137,7 +159,7 @@ class FileResponseHandler final : public ResponseHandler {
 
   private:
     void render_progress(bool force) {
-        if (response_.status_code == 416) {
+        if (response_.status_code == 416 || response_.status_code >= 400) {
             return;
         }
 
@@ -166,6 +188,7 @@ class FileResponseHandler final : public ResponseHandler {
     std::ofstream stream_;
     std::uint64_t bytes_written_ = 0;
     bool resumed_transfer_ = false;
+    bool discard_body_ = false;
     std::chrono::steady_clock::time_point last_progress_rendered_at_{};
 };
 
@@ -186,7 +209,8 @@ TargetDownloadExecutor::TargetDownloadExecutor(
 
 DownloadResult TargetDownloadExecutor::run(const DownloadTarget& target) const {
     ensure_directory(target.output_path.parent_path());
-    const int total_attempts = request_->retry_count + 1;
+    const int bounded_retry_count = std::clamp(request_->retry_count, 0, kMaxRetryCount);
+    const int total_attempts = bounded_retry_count + 1;
     std::unique_ptr<TargetFileLock> target_lock;
 
     for (int attempt = 1; attempt <= total_attempts; ++attempt) {
@@ -349,9 +373,14 @@ std::pair<std::uint64_t, bool> TargetDownloadExecutor::stream_download(
 
     const bool resumed = attempted_resume && response.status_code == 206;
     const auto expected_size = expected_total_size(response, remote_metadata, start_byte);
+    if (!expected_size.has_value()) {
+        throw DownloadIntegrityError(
+            "response did not provide a verifiable file size (Content-Length/Content-Range missing)."
+        );
+    }
 
     const auto actual_size = std::filesystem::file_size(target.temp_path());
-    if (expected_size.has_value() && actual_size != *expected_size) {
+    if (actual_size != *expected_size) {
         throw DownloadIntegrityError(
             fmt::format(
                 "file size does not match the response headers ({} != {} bytes).",

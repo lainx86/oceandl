@@ -19,6 +19,7 @@
 - Simple TOML config with strict type validation
 - `--verbose` and `--quiet` modes
 - `help`, `datasets`, `providers`, and `info` still work even when the local config is broken
+- Safe retry policy with bounded exponential backoff
 
 Built-in datasets:
 
@@ -43,12 +44,13 @@ Expected system dependencies:
 - `fmt`
 - `tomlplusplus`
 
+For Windows CI and reproducible dependency bootstrap, this repo also ships `vcpkg.json`.
+
 Platforms currently covered by CI:
 
 - Linux
 - macOS
-
-Windows path expansion and lock behavior are considered in the implementation, but there is no dedicated Windows CI job yet.
+- Windows
 
 Local build:
 
@@ -63,10 +65,24 @@ Install the binary to a custom prefix:
 cmake --install build --prefix /tmp/oceandl-install
 ```
 
+Windows install example:
+
+```powershell
+cmake --install build --config Release --prefix "$env:TEMP\oceandl-install"
+```
+
 Run tests:
 
 ```bash
 ctest --test-dir build --output-on-failure
+```
+
+Windows PowerShell example:
+
+```powershell
+cmake -S . -B build
+cmake --build build --config Release
+ctest --test-dir build --build-config Release --output-on-failure
 ```
 
 Run the binary:
@@ -151,6 +167,7 @@ Set timeout, chunk size, and retry count:
 ```
 
 `chunk_size` is used as the requested receive buffer size passed to `libcurl`.
+`retry_count` is bounded to `0..10` to keep retries predictable and avoid pathological retry loops.
 
 Output modes:
 
@@ -200,6 +217,26 @@ Notes:
 - Invalid config value types now fail fast instead of being silently ignored.
 - Unknown config keys are ignored with a warning.
 - URLs in `provider_base_urls` and `dataset_base_urls` must be `http://` or `https://`.
+- `retry_count` must be an integer in the range `0..10`.
+
+## Reliability policy
+
+- Downloads are only accepted when the final size is verifiable from
+  `Content-Length` or `Content-Range`.
+- HTTP error responses (`4xx/5xx`) are never persisted into `.part` files.
+- `.part` files are removed after integrity/payload validation failures.
+- Resume only proceeds when remote identity checks (ETag or Last-Modified) are safe.
+
+## Troubleshooting
+
+- `Could not resolve hostname`:
+  Check DNS/network connectivity or configure the network/proxy environment correctly.
+- `response did not provide a verifiable file size`:
+  The remote endpoint did not provide `Content-Length`/`Content-Range`; this is rejected for safety.
+- `retry_count must be between 0 and 10`:
+  Reduce `retry_count` in CLI flags or `config.toml`.
+- `target is already being used by another process`:
+  Another `oceandl` process is downloading the same target; wait for it to finish.
 
 ## Output layout
 
@@ -231,6 +268,20 @@ Notes:
   TOML config loader.
 - `cpp/src/validation.cpp`
   Lightweight NetCDF validation.
+
+## Release and distribution
+
+- CI builds and tests on Linux, macOS, and Windows.
+- Tagging `v*` triggers the release workflow that builds platform artifacts and uploads them to GitHub Releases.
+- Produced artifacts include the binary plus `README`, `LICENSE`, and `CHANGELOG`.
+
+## Open-source project files
+
+- [CONTRIBUTING.md](CONTRIBUTING.md)
+- [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md)
+- [SECURITY.md](SECURITY.md)
+- [CHANGELOG.md](CHANGELOG.md)
+- [RELEASING.md](RELEASING.md)
 
 ## Adding a new dataset
 

@@ -346,6 +346,31 @@ bool test_download_request_validation() {
     }
 }
 
+bool test_download_request_rejects_excessive_retry_count() {
+    TempDir temp_dir;
+    try {
+        DownloadRequest invalid{
+            .dataset = "oisst",
+            .start_year = 2024,
+            .end_year = 2024,
+            .output_dir = temp_dir.path(),
+            .overwrite = false,
+            .resume = true,
+            .timeout = 60.0,
+            .chunk_size = 1024,
+            .retry_count = kMaxRetryCount + 1,
+        };
+        invalid.normalize_and_validate();
+        return expect(false, "excessive retry_count should fail");
+    } catch (const std::exception& error) {
+        return expect_contains(
+            error.what(),
+            "retry_count must be between 0 and",
+            "retry_count upper bound message"
+        );
+    }
+}
+
 bool test_download_command_parses_flags() {
     const auto options = parse_download_options(
         {
@@ -963,6 +988,152 @@ bool test_downloader_retries_transient_network_error() {
         && expect(get_calls == 2, "transient network error triggered second get");
 }
 
+bool test_downloader_retries_http_503_without_corrupting_partial() {
+    TempDir temp_dir;
+    auto dataset = fixture_dataset();
+    auto request = fixture_request(temp_dir.path());
+    request.retry_count = 1;
+    request.normalize_and_validate();
+    const auto payload = valid_netcdf_bytes();
+
+    const auto part_path = temp_dir.path() / dataset.id / "fixture.nc.part";
+    const auto meta_path = temp_dir.path() / dataset.id / "fixture.nc.part.meta";
+    std::filesystem::create_directories(part_path.parent_path());
+    std::ofstream partial(part_path, std::ios::binary);
+    partial.write(payload.data(), 16);
+    partial.close();
+    write_partial_metadata_file(meta_path, payload.size(), "\"fixture-v1\"");
+
+    std::vector<std::string> range_values;
+    int get_calls = 0;
+    FakeHttpClient client;
+    client.on_head = [&](const HttpRequest&) {
+        return HttpResponse{
+            .status_code = 200,
+            .headers = {
+                {"content-length", std::to_string(payload.size())},
+                {"accept-ranges", "bytes"},
+                {"etag", "\"fixture-v1\""},
+            },
+            .bytes_transferred = 0,
+        };
+    };
+    client.on_get = [&](const HttpRequest& request, ResponseHandler& handler) {
+        ++get_calls;
+        range_values.push_back(request_header_value(request, "Range: "));
+
+        if (get_calls == 1) {
+            constexpr std::string_view kErrorPayload = "service unavailable";
+            handler.on_response_start(
+                HttpResponse{
+                    .status_code = 503,
+                    .headers = {},
+                    .bytes_transferred = 0,
+                }
+            );
+            handler.on_chunk(kErrorPayload);
+            return HttpResponse{
+                .status_code = 503,
+                .headers = {},
+                .bytes_transferred = kErrorPayload.size(),
+            };
+        }
+
+        handler.on_response_start(
+            HttpResponse{
+                .status_code = 206,
+                .headers = {
+                    {"content-length", std::to_string(payload.size() - 16)},
+                    {"content-range", "bytes 16-31/32"},
+                },
+                .bytes_transferred = 0,
+            }
+        );
+        handler.on_chunk(std::string_view(payload.data() + 16, payload.size() - 16));
+        return HttpResponse{
+            .status_code = 206,
+            .headers = {
+                {"content-length", std::to_string(payload.size() - 16)},
+                {"content-range", "bytes 16-31/32"},
+            },
+            .bytes_transferred = payload.size() - 16,
+        };
+    };
+
+    std::ostringstream out;
+    std::ostringstream err;
+    Reporter reporter(out, err, Verbosity::Quiet);
+    Downloader downloader(client, reporter);
+    FixtureProvider provider(
+        {.content_length = payload.size(), .accepts_ranges = true, .etag = "\"fixture-v1\""}
+    );
+
+    const auto summary = downloader.download(request, dataset, provider);
+    const auto final_path = temp_dir.path() / dataset.id / "fixture.nc";
+    const auto validation = validate_netcdf_file(final_path, payload.size());
+
+    return expect(summary.downloaded_count() == 1, "http 503 retry eventually succeeds")
+        && expect(summary.results.at(0).attempts == 2, "http 503 consumed one retry")
+        && expect(get_calls == 2, "http 503 triggered a second get")
+        && expect(range_values.size() == 2, "range values recorded for each attempt")
+        && expect(range_values.at(0) == "bytes=16-", "first attempt resumed from original partial")
+        && expect(range_values.at(1) == "bytes=16-", "retry reused uncorrupted partial offset")
+        && expect(validation.valid, "final file remains valid netcdf after retry")
+        && expect(!std::filesystem::exists(part_path), "part removed after successful retry")
+        && expect(!std::filesystem::exists(meta_path), "part metadata removed after successful retry");
+}
+
+bool test_downloader_rejects_download_without_verifiable_size() {
+    TempDir temp_dir;
+    auto dataset = fixture_dataset();
+    auto request = fixture_request(temp_dir.path());
+    const auto payload = valid_netcdf_bytes();
+
+    FakeHttpClient client;
+    client.on_head = [&](const HttpRequest&) {
+        return HttpResponse{
+            .status_code = 200,
+            .headers = {{"etag", "\"fixture-v1\""}},
+            .bytes_transferred = 0,
+        };
+    };
+    client.on_get = [&](const HttpRequest&, ResponseHandler& handler) {
+        handler.on_response_start(
+            HttpResponse{
+                .status_code = 200,
+                .headers = {{"etag", "\"fixture-v1\""}},
+                .bytes_transferred = 0,
+            }
+        );
+        handler.on_chunk(std::string_view(payload.data(), payload.size()));
+        return HttpResponse{
+            .status_code = 200,
+            .headers = {{"etag", "\"fixture-v1\""}},
+            .bytes_transferred = payload.size(),
+        };
+    };
+
+    std::ostringstream out;
+    std::ostringstream err;
+    Reporter reporter(out, err, Verbosity::Quiet);
+    Downloader downloader(client, reporter);
+    FixtureProvider provider({.content_length = std::nullopt, .accepts_ranges = true, .etag = "\"fixture-v1\""});
+
+    const auto summary = downloader.download(request, dataset, provider);
+    const auto output_path = temp_dir.path() / dataset.id / "fixture.nc";
+    const auto part_path = output_path.parent_path() / "fixture.nc.part";
+    const auto meta_path = output_path.parent_path() / "fixture.nc.part.meta";
+    return expect(summary.failed_count() == 1, "download without size metadata fails safely")
+        && expect_contains(
+            summary.failures().at(0).error_message,
+            "verifiable file size",
+            "missing-size failure message"
+        )
+        && expect(!std::filesystem::exists(output_path), "no final output when size is unverifiable")
+        && expect(!std::filesystem::exists(part_path), "partial data removed when size is unverifiable")
+        && expect(!std::filesystem::exists(meta_path), "partial metadata removed when size is unverifiable");
+}
+
 bool test_downloader_does_not_retry_permanent_network_error() {
     TempDir temp_dir;
     auto dataset = fixture_dataset();
@@ -1186,6 +1357,25 @@ bool test_config_load_rejects_invalid_scalar_type() {
     }
 }
 
+bool test_config_load_rejects_excessive_retry_count() {
+    TempDir temp_dir;
+    const auto config_path = temp_dir.path() / "config.toml";
+    std::ofstream config(config_path);
+    config << "retry_count = " << (kMaxRetryCount + 1) << '\n';
+    config.close();
+
+    try {
+        (void)load_config(config_path);
+        return expect(false, "excessive retry_count in config should fail");
+    } catch (const std::exception& error) {
+        return expect_contains(
+            error.what(),
+            "retry_count must be between 0 and",
+            "config excessive retry_count message"
+        );
+    }
+}
+
 bool test_config_load_rejects_invalid_url_value() {
     TempDir temp_dir;
     const auto config_path = temp_dir.path() / "config.toml";
@@ -1392,6 +1582,30 @@ bool test_cli_rejects_non_finite_timeout() {
         && expect_contains(err.str(), "Invalid value for --timeout: inf", "cli non-finite timeout message");
 }
 
+bool test_cli_rejects_excessive_retry_count() {
+    CliApp app;
+    std::ostringstream out;
+    std::ostringstream err;
+
+    const auto exit_code = app.run(
+        {
+            "download",
+            "gpcp",
+            "--retries",
+            std::to_string(kMaxRetryCount + 1),
+        },
+        out,
+        err
+    );
+
+    return expect(exit_code == 2, "cli exit code for excessive retry_count")
+        && expect_contains(
+            err.str(),
+            "retry_count must be between 0 and",
+            "cli excessive retry_count message"
+        );
+}
+
 bool test_cli_rejects_year_flags_for_single_file_dataset() {
     TempDir temp_dir;
     CliApp app;
@@ -1446,6 +1660,7 @@ int main() {
     const std::vector<std::pair<std::string, std::function<bool()>>> tests = {
         {"registry_contains_expected_datasets", test_registry_contains_expected_datasets},
         {"download_request_validation", test_download_request_validation},
+        {"download_request_rejects_excessive_retry_count", test_download_request_rejects_excessive_retry_count},
         {"download_command_parses_flags", test_download_command_parses_flags},
         {"download_command_resolves_dataset", test_download_command_resolves_dataset_from_option_or_config},
         {"download_command_rejects_conflict", test_download_command_rejects_conflicting_dataset_values},
@@ -1464,12 +1679,15 @@ int main() {
         {"downloader_recovers_legacy_lock_directory_without_peer_process", test_downloader_recovers_legacy_lock_directory_without_peer_process},
         {"safe_replace_file_restores_existing_output_on_failure", test_safe_replace_file_restores_existing_output_on_failure},
         {"downloader_retries_transient_network_error", test_downloader_retries_transient_network_error},
+        {"downloader_retries_http_503_without_corrupting_partial", test_downloader_retries_http_503_without_corrupting_partial},
+        {"downloader_rejects_download_without_verifiable_size", test_downloader_rejects_download_without_verifiable_size},
         {"downloader_does_not_retry_permanent_network_error", test_downloader_does_not_retry_permanent_network_error},
         {"downloader_continues_when_head_metadata_is_blocked", test_downloader_continues_when_head_metadata_is_blocked},
         {"downloader_continues_when_head_metadata_has_network_error", test_downloader_continues_when_head_metadata_has_network_error},
         {"downloader_propagates_chunk_size_to_http_client", test_downloader_propagates_chunk_size_to_http_client},
         {"config_load_merges_dataset_urls", test_config_load_merges_dataset_urls},
         {"config_load_rejects_invalid_scalar_type", test_config_load_rejects_invalid_scalar_type},
+        {"config_load_rejects_excessive_retry_count", test_config_load_rejects_excessive_retry_count},
         {"config_load_rejects_invalid_url_value", test_config_load_rejects_invalid_url_value},
         {"config_load_reports_unknown_keys", test_config_load_reports_unknown_keys},
         {"parse_retry_after_seconds_clamps_numeric_header", test_parse_retry_after_seconds_clamps_numeric_header},
@@ -1484,6 +1702,7 @@ int main() {
         {"cli_rejects_invalid_year_suffix", test_cli_rejects_invalid_year_suffix},
         {"cli_rejects_invalid_timeout_suffix", test_cli_rejects_invalid_timeout_suffix},
         {"cli_rejects_non_finite_timeout", test_cli_rejects_non_finite_timeout},
+        {"cli_rejects_excessive_retry_count", test_cli_rejects_excessive_retry_count},
         {"cli_rejects_year_flags_for_single_file_dataset", test_cli_rejects_year_flags_for_single_file_dataset},
         {"dataset_rejects_future_and_excessive_year_ranges", test_dataset_rejects_future_and_excessive_year_ranges},
     };

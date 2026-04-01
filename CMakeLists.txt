@@ -40,7 +40,17 @@ add_executable(oceandl cpp/src/main.cpp)
 target_link_libraries(oceandl PRIVATE oceandl_lib)
 
 install(TARGETS oceandl RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
-install(FILES README.md LICENSE DESTINATION ${CMAKE_INSTALL_DOCDIR})
+install(
+    FILES
+        README.md
+        LICENSE
+        CHANGELOG.md
+        CONTRIBUTING.md
+        CODE_OF_CONDUCT.md
+        SECURITY.md
+        RELEASING.md
+    DESTINATION ${CMAKE_INSTALL_DOCDIR}
+)
 
 add_executable(oceandl_tests cpp/tests/test_main.cpp)
 target_link_libraries(oceandl_tests PRIVATE oceandl_lib)

@@ -203,8 +203,10 @@ void DownloadRequest::normalize_and_validate() {
     if (chunk_size < 1024) {
         throw std::invalid_argument("chunk_size must be at least 1024 bytes.");
     }
-    if (retry_count < 0) {
-        throw std::invalid_argument("retry_count must not be negative.");
+    if (retry_count < 0 || retry_count > kMaxRetryCount) {
+        throw std::invalid_argument(
+            "retry_count must be between 0 and " + std::to_string(kMaxRetryCount) + "."
+        );
     }
     if (start_year.has_value() != end_year.has_value()) {
         throw std::invalid_argument("start_year and end_year must be provided together.");

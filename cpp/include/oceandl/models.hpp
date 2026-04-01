@@ -8,6 +8,8 @@
 
 namespace oceandl {
 
+inline constexpr int kMaxRetryCount = 10;
+
 enum class FileMode {
     PerYear,
     SingleFile,
