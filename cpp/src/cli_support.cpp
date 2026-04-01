@@ -18,6 +18,12 @@ bool is_help_token(const std::string& token) {
     return token == "--help" || token == "-h";
 }
 
+bool any_help_token(const std::vector<std::string>& args) {
+    return std::any_of(args.begin(), args.end(), [](const std::string& token) {
+        return is_help_token(token);
+    });
+}
+
 using KeyValueRows = std::vector<std::pair<std::string, std::string>>;
 
 std::size_t widest_label(const KeyValueRows& rows) {
@@ -54,7 +60,7 @@ void print_providers(
     const Reporter& reporter
 ) {
     const auto providers = provider_registry.list();
-    reporter.section("Provider", fmt::format("{} provider tersedia", providers.size()), true);
+    reporter.section("Providers", fmt::format("{} provider(s) available", providers.size()), true);
 
     for (std::size_t index = 0; index < providers.size(); ++index) {
         const auto& provider = providers[index];
@@ -76,7 +82,7 @@ void print_providers(
         print_key_value_rows(
             {
                 {"transport", provider->provider_info().transport},
-                {"deskripsi", provider->provider_info().description},
+                {"description", provider->provider_info().description},
                 {"datasets", dataset_ids.empty() ? "-" : join_strings(dataset_ids, ", ")},
             },
             reporter
@@ -91,9 +97,9 @@ void print_providers(
 void print_datasets(const DatasetRegistry& dataset_registry, const Reporter& reporter) {
     const auto datasets = dataset_registry.list();
     reporter.section(
-        "Dataset",
+        "Datasets",
         fmt::format(
-            "{} dataset tersedia | default: {}",
+            "{} dataset(s) available | default: {}",
             datasets.size(),
             dataset_registry.default_dataset()
         ),
@@ -112,11 +118,11 @@ void print_datasets(const DatasetRegistry& dataset_registry, const Reporter& rep
         );
         print_key_value_rows(
             {
-                {"nama", dataset.display_name},
+                {"name", dataset.display_name},
                 {"provider", dataset.provider_key},
-                {"tahun", dataset.year_range_label()},
+                {"years", dataset.year_range_label()},
                 {"mode", dataset_mode_label(dataset)},
-                {"deskripsi", dataset.description},
+                {"description", dataset.description},
             },
             reporter
         );
@@ -139,7 +145,7 @@ void print_info(
     );
     print_key_value_rows(
         {
-            {"deskripsi", dataset.description},
+            {"description", dataset.description},
             {
                 "provider",
                 fmt::format(
@@ -150,35 +156,35 @@ void print_info(
             },
             {"mode", dataset_mode_label(dataset)},
             {"base URL", dataset.base_url},
-            {"pola file", dataset.filename_pattern},
-            {"tahun", dataset.year_range_label()},
-            {"contoh", dataset.example_file_name()},
+            {"file pattern", dataset.filename_pattern},
+            {"years", dataset.year_range_label()},
+            {"example", dataset.example_file_name()},
         },
         reporter
     );
 }
 
 void print_providers_help(const Reporter& reporter) {
-    reporter.section("Perintah providers", "Lihat provider yang tersedia.", true);
+    reporter.section("providers command", "List the available providers.", true);
     reporter.blank_line(true);
-    reporter.section("Cara pakai", {}, true);
+    reporter.section("Usage", {}, true);
     reporter.print("  oceandl providers", true);
 }
 
 void print_datasets_help(const Reporter& reporter) {
-    reporter.section("Perintah datasets", "Lihat katalog dataset bawaan.", true);
+    reporter.section("datasets command", "List the built-in dataset catalog.", true);
     reporter.blank_line(true);
-    reporter.section("Cara pakai", {}, true);
+    reporter.section("Usage", {}, true);
     reporter.print("  oceandl datasets", true);
 }
 
 void print_info_help(const Reporter& reporter) {
-    reporter.section("Perintah info", "Tampilkan metadata detail sebuah dataset.", true);
+    reporter.section("info command", "Show detailed metadata for a dataset.", true);
     reporter.blank_line(true);
-    reporter.section("Cara pakai", {}, true);
+    reporter.section("Usage", {}, true);
     reporter.print("  oceandl info <dataset>", true);
     reporter.blank_line(true);
-    reporter.section("Contoh", {}, true);
+    reporter.section("Example", {}, true);
     reporter.print("  oceandl info oisst", true);
 }
 
@@ -212,7 +218,7 @@ GlobalOptions parse_global_options(const std::vector<std::string>& args) {
     }
 
     if (verbose && quiet) {
-        throw CliError("Gunakan salah satu dari --verbose atau --quiet.", 2);
+        throw CliError("Use either --verbose or --quiet.", 2);
     }
     if (verbose) {
         options.verbosity = Verbosity::Verbose;
@@ -223,58 +229,96 @@ GlobalOptions parse_global_options(const std::vector<std::string>& args) {
     return options;
 }
 
-CliRuntime load_cli_runtime(const std::filesystem::path& config_path) {
-    auto config = load_config(config_path);
+RuntimeRequirement classify_runtime_requirement(const std::vector<std::string>& args) {
+    if (args.empty()) {
+        return RuntimeRequirement::None;
+    }
+
+    const auto& command = args.front();
+    const std::vector<std::string> command_args(args.begin() + 1, args.end());
+    if (command == "help") {
+        return RuntimeRequirement::None;
+    }
+    if (command == "download") {
+        return any_help_token(command_args) ? RuntimeRequirement::None : RuntimeRequirement::Required;
+    }
+    if (command == "providers" || command == "datasets" || command == "info") {
+        if (command_args.size() == 1 && is_help_token(command_args.front())) {
+            return RuntimeRequirement::None;
+        }
+        return RuntimeRequirement::Optional;
+    }
+
+    return RuntimeRequirement::None;
+}
+
+CliRuntime default_cli_runtime() {
+    auto config = default_app_config();
     return {
         .config = config,
         .dataset_registry = build_default_dataset_registry(config),
         .provider_registry = build_default_provider_registry(),
+        .config_path = default_config_path(),
+        .config_warnings = {},
+        .config_loaded_from_file = false,
+    };
+}
+
+CliRuntime load_cli_runtime(const std::filesystem::path& config_path) {
+    const auto loaded = load_config_with_diagnostics(config_path);
+    return {
+        .config = loaded.config,
+        .dataset_registry = build_default_dataset_registry(loaded.config),
+        .provider_registry = build_default_provider_registry(),
+        .config_path = loaded.path,
+        .config_warnings = loaded.warnings,
+        .config_loaded_from_file = loaded.loaded_from_file,
     };
 }
 
 void print_help(const Reporter& reporter) {
     reporter.section(
         fmt::format("oceandl {}", kVersion),
-        "CLI C++ untuk mengunduh dataset NetCDF dari NOAA PSL.",
+        "C++ CLI for downloading NetCDF datasets from NOAA PSL.",
         true
     );
     reporter.blank_line(true);
-    reporter.section("Cara pakai", {}, true);
+    reporter.section("Usage", {}, true);
     print_key_value_rows(
         {
-            {"utama", "oceandl [--config PATH] [--verbose|--quiet] <command> [options]"},
-            {"versi", "oceandl --version"},
+            {"main", "oceandl [--config PATH] [--verbose|--quiet] <command> [options]"},
+            {"version", "oceandl --version"},
         },
         reporter
     );
 
     reporter.blank_line(true);
-    reporter.section("Perintah", {}, true);
+    reporter.section("Commands", {}, true);
     print_key_value_rows(
         {
-            {"providers", "Lihat provider yang tersedia"},
-            {"datasets", "Lihat katalog dataset bawaan"},
-            {"info <dataset>", "Tampilkan metadata detail sebuah dataset"},
-            {"download [dataset]", "Unduh dataset memakai config dan flag saat ini"},
-            {"help [command]", "Tampilkan bantuan umum atau bantuan command tertentu"},
+            {"providers", "List the available providers"},
+            {"datasets", "List the built-in dataset catalog"},
+            {"info <dataset>", "Show detailed metadata for a dataset"},
+            {"download [dataset]", "Download a dataset using the current config and flags"},
+            {"help [command]", "Show general help or command-specific help"},
         },
         reporter
     );
 
     reporter.blank_line(true);
-    reporter.section("Opsi global", {}, true);
+    reporter.section("Global options", {}, true);
     print_key_value_rows(
         {
-            {"--config PATH", "Gunakan file config tertentu"},
-            {"--help, -h", "Tampilkan bantuan umum"},
-            {"--verbose", "Tampilkan detail proses tambahan"},
-            {"--quiet", "Sembunyikan output non-kritis"},
+            {"--config PATH", "Use a specific config file"},
+            {"--help, -h", "Show general help"},
+            {"--verbose", "Show additional process details"},
+            {"--quiet", "Hide non-critical output"},
         },
         reporter
     );
 
     reporter.blank_line(true);
-    reporter.section("Contoh", {}, true);
+    reporter.section("Examples", {}, true);
     reporter.print("  oceandl --help", true);
     reporter.print("  oceandl datasets", true);
     reporter.print("  oceandl download --help", true);
@@ -301,7 +345,7 @@ int run_command(
             return 0;
         }
         if (command_args.size() != 1) {
-            throw CliError("Command help menerima nol atau satu nama perintah.", 2);
+            throw CliError("The help command accepts zero or one command name.", 2);
         }
 
         const auto& help_target = command_args.front();
@@ -321,7 +365,7 @@ int run_command(
             print_download_help(reporter);
             return 0;
         }
-        throw CliError("Bantuan untuk command tidak dikenal: " + help_target, 2);
+        throw CliError("Help is not available for unknown command: " + help_target, 2);
     }
 
     if (command == "providers") {
@@ -330,7 +374,7 @@ int run_command(
             return 0;
         }
         if (!command_args.empty()) {
-            throw CliError("Command providers tidak menerima argumen.", 2);
+            throw CliError("The providers command does not accept arguments.", 2);
         }
         print_providers(runtime.provider_registry, runtime.dataset_registry, reporter);
         return 0;
@@ -342,7 +386,7 @@ int run_command(
             return 0;
         }
         if (!command_args.empty()) {
-            throw CliError("Command datasets tidak menerima argumen.", 2);
+            throw CliError("The datasets command does not accept arguments.", 2);
         }
         print_datasets(runtime.dataset_registry, reporter);
         return 0;
@@ -354,7 +398,7 @@ int run_command(
             return 0;
         }
         if (command_args.size() != 1) {
-            throw CliError("Command info membutuhkan satu dataset id.", 2);
+            throw CliError("The info command requires exactly one dataset id.", 2);
         }
         const auto& dataset = runtime.dataset_registry.get(command_args[0]);
         const auto provider = runtime.provider_registry.get_for_dataset(dataset);

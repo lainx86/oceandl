@@ -1,6 +1,7 @@
 #include "oceandl/models.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <chrono>
 #include <stdexcept>
 
@@ -11,6 +12,7 @@ namespace oceandl {
 namespace {
 
 constexpr int kMaxRequestedFiles = 500;
+constexpr double kMaxTimeoutSeconds = 86400.0;
 
 int current_calendar_year() {
     using namespace std::chrono;
@@ -40,24 +42,27 @@ void DatasetInfo::normalize_and_validate() {
     filename_pattern = trim(filename_pattern);
 
     if (id.empty()) {
-        throw std::invalid_argument("identifier tidak boleh kosong.");
+        throw std::invalid_argument("dataset id must not be empty.");
     }
     if (provider_key.empty()) {
-        throw std::invalid_argument("identifier tidak boleh kosong.");
+        throw std::invalid_argument("provider_key must not be empty.");
     }
     if (base_url.empty()) {
-        throw std::invalid_argument("base_url tidak boleh kosong.");
+        throw std::invalid_argument("base_url must not be empty.");
+    }
+    if (!is_http_url(base_url)) {
+        throw std::invalid_argument("base_url must be a valid http/https URL.");
     }
     if (filename_pattern.empty()) {
-        throw std::invalid_argument("filename_pattern tidak boleh kosong.");
+        throw std::invalid_argument("filename_pattern must not be empty.");
     }
 
     const bool has_year_token = filename_pattern.find("{year}") != std::string::npos;
     if (file_mode == FileMode::PerYear && !has_year_token) {
-        throw std::invalid_argument("Dataset per_year harus memakai placeholder '{year}'.");
+        throw std::invalid_argument("Per-year datasets must use the '{year}' placeholder.");
     }
     if (file_mode == FileMode::SingleFile && has_year_token) {
-        throw std::invalid_argument("Dataset single_file tidak boleh memakai placeholder '{year}'.");
+        throw std::invalid_argument("Single-file datasets must not use the '{year}' placeholder.");
     }
 }
 
@@ -68,7 +73,7 @@ bool DatasetInfo::requires_years() const {
 std::string DatasetInfo::file_name(std::optional<int> year) const {
     if (requires_years()) {
         if (!year.has_value()) {
-            throw std::invalid_argument("Dataset membutuhkan nilai year.");
+            throw std::invalid_argument("This dataset requires a year value.");
         }
         validate_year(*year);
         return render_year_pattern(filename_pattern, *year);
@@ -123,7 +128,7 @@ int DatasetInfo::requested_file_count(
     }
     if (!requested_start_year.has_value() || !requested_end_year.has_value()) {
         throw std::invalid_argument(
-            "Dataset '" + id + "' membutuhkan --start-year dan --end-year."
+            "Dataset '" + id + "' requires both --start-year and --end-year."
         );
     }
     return *requested_end_year - *requested_start_year + 1;
@@ -135,13 +140,14 @@ void DatasetInfo::validate_year(int year) const {
     }
     if (start_year.has_value() && year < *start_year) {
         throw std::invalid_argument(
-            "Dataset '" + id + "' hanya mendukung tahun mulai " + std::to_string(*start_year) + "."
+            "Dataset '" + id + "' only supports years starting at "
+            + std::to_string(*start_year) + "."
         );
     }
     const auto max_supported_year = end_year.value_or(current_calendar_year());
     if (year > max_supported_year) {
         throw std::invalid_argument(
-            "Dataset '" + id + "' hanya mendukung tahun sampai "
+            "Dataset '" + id + "' only supports years through "
             + std::to_string(max_supported_year) + "."
         );
     }
@@ -162,22 +168,22 @@ void DatasetInfo::validate_requested_years(
     if (!requires_years()) {
         if (requested_start_year.has_value() || requested_end_year.has_value()) {
             throw std::invalid_argument(
-                "Dataset '" + id + "' tidak menerima --start-year dan --end-year."
+                "Dataset '" + id + "' does not accept --start-year or --end-year."
             );
         }
         return;
     }
     if (!requested_start_year.has_value() || !requested_end_year.has_value()) {
         throw std::invalid_argument(
-            "Dataset '" + id + "' membutuhkan --start-year dan --end-year."
+            "Dataset '" + id + "' requires both --start-year and --end-year."
         );
     }
     validate_year_span(*requested_start_year, *requested_end_year);
     const auto file_count = requested_file_count(requested_start_year, requested_end_year);
     if (file_count > kMaxRequestedFiles) {
         throw std::invalid_argument(
-            "Dataset '" + id + "' membatasi maksimal " + std::to_string(kMaxRequestedFiles)
-            + " file per request."
+            "Dataset '" + id + "' limits requests to at most "
+            + std::to_string(kMaxRequestedFiles) + " file(s)."
         );
     }
 }
@@ -187,28 +193,30 @@ void DownloadRequest::normalize_and_validate() {
     output_dir = expand_user(output_dir);
 
     if (dataset.empty()) {
-        throw std::invalid_argument("dataset tidak boleh kosong.");
+        throw std::invalid_argument("dataset must not be empty.");
     }
-    if (timeout <= 0) {
-        throw std::invalid_argument("timeout harus lebih besar dari 0.");
+    if (!std::isfinite(timeout) || timeout <= 0 || timeout > kMaxTimeoutSeconds) {
+        throw std::invalid_argument(
+            "timeout must be finite, greater than 0, and not excessively large."
+        );
     }
     if (chunk_size < 1024) {
-        throw std::invalid_argument("chunk_size minimal 1024 bytes.");
+        throw std::invalid_argument("chunk_size must be at least 1024 bytes.");
     }
     if (retry_count < 0) {
-        throw std::invalid_argument("retry_count tidak boleh negatif.");
+        throw std::invalid_argument("retry_count must not be negative.");
     }
     if (start_year.has_value() != end_year.has_value()) {
-        throw std::invalid_argument("start_year dan end_year harus diisi bersamaan.");
+        throw std::invalid_argument("start_year and end_year must be provided together.");
     }
     if (start_year.has_value() && end_year.has_value() && *start_year > *end_year) {
-        throw std::invalid_argument("start_year harus lebih kecil atau sama dengan end_year.");
+        throw std::invalid_argument("start_year must be less than or equal to end_year.");
     }
 }
 
 std::vector<int> DownloadRequest::years() const {
     if (!start_year.has_value() || !end_year.has_value()) {
-        throw std::invalid_argument("Rentang tahun belum diisi.");
+        throw std::invalid_argument("The requested year range is not set.");
     }
 
     std::vector<int> result;

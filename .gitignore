@@ -6,6 +6,7 @@
 /data
 /data_sst
 CMakeCache.txt
+PROBLEM.md
 CMakeFiles/
 Testing/
 *.cmake.user

@@ -4,11 +4,44 @@
 #include <charconv>
 #include <cctype>
 #include <cstdlib>
+#include <optional>
 #include <sstream>
 
 #include <fmt/format.h>
 
 namespace oceandl {
+
+namespace {
+
+std::optional<std::filesystem::path> home_directory_path() {
+    const auto getenv_path = [](const char* name) -> std::optional<std::filesystem::path> {
+        const char* value = std::getenv(name);
+        if (value == nullptr || std::string_view(value).empty()) {
+            return std::nullopt;
+        }
+        return std::filesystem::path(value);
+    };
+
+    if (const auto home = getenv_path("HOME")) {
+        return home;
+    }
+
+#ifdef _WIN32
+    if (const auto user_profile = getenv_path("USERPROFILE")) {
+        return user_profile;
+    }
+
+    const auto home_drive = getenv_path("HOMEDRIVE");
+    const auto home_path = getenv_path("HOMEPATH");
+    if (home_drive.has_value() && home_path.has_value()) {
+        return *home_drive / *home_path;
+    }
+#endif
+
+    return std::nullopt;
+}
+
+}  // namespace
 
 std::string trim(std::string_view value) {
     auto begin = value.find_first_not_of(" \t\r\n");
@@ -41,16 +74,21 @@ std::filesystem::path expand_user(const std::filesystem::path& path) {
         return path;
     }
 
-    const char* home = std::getenv("HOME");
-    if (home == nullptr || std::string_view(home).empty()) {
+    const auto home = home_directory_path();
+    if (!home.has_value()) {
         return path;
     }
 
     if (raw == "~") {
-        return std::filesystem::path(home);
+        return *home;
     }
     if (raw.rfind("~/", 0) == 0) {
-        return std::filesystem::path(home) / raw.substr(2);
+        return *home / raw.substr(2);
+#ifdef _WIN32
+    }
+    if (raw.rfind("~\\", 0) == 0) {
+        return *home / raw.substr(2);
+#endif
     }
     return path;
 }
@@ -89,6 +127,21 @@ void safe_replace_file(const std::filesystem::path& source, const std::filesyste
     }
 
     safe_remove(backup);
+}
+
+bool is_http_url(std::string_view value) {
+    const auto normalized = to_lower(trim(value));
+    if (normalized.size() <= std::string_view("http://").size()) {
+        return false;
+    }
+
+    const bool has_supported_scheme =
+        normalized.rfind("http://", 0) == 0 || normalized.rfind("https://", 0) == 0;
+    if (!has_supported_scheme) {
+        return false;
+    }
+
+    return normalized.find_first_of(" \t\r\n") == std::string::npos;
 }
 
 std::string format_bytes(std::uint64_t size_in_bytes) {

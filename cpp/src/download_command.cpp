@@ -1,6 +1,7 @@
 #include "download_command.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <filesystem>
 #include <optional>
 #include <stdexcept>
@@ -48,7 +49,7 @@ void print_key_value_rows(const KeyValueRows& rows, const Reporter& reporter) {
 }
 
 std::string yes_no(bool value) {
-    return value ? "ya" : "tidak";
+    return value ? "yes" : "no";
 }
 
 std::size_t resumed_count(const DownloadSummary& summary) {
@@ -89,7 +90,7 @@ int parse_int_or_throw(const std::string& value, const std::string& option) {
         }
         return parsed;
     } catch (...) {
-        throw CliError("Nilai tidak valid untuk " + option + ": " + value, 2);
+        throw CliError("Invalid value for " + option + ": " + value, 2);
     }
 }
 
@@ -101,9 +102,12 @@ double parse_double_or_throw(const std::string& value, const std::string& option
         if (parsed_size != trimmed_value.size()) {
             throw std::invalid_argument("trailing characters");
         }
+        if (!std::isfinite(parsed)) {
+            throw std::invalid_argument("non-finite");
+        }
         return parsed;
     } catch (...) {
-        throw CliError("Nilai tidak valid untuk " + option + ": " + value, 2);
+        throw CliError("Invalid value for " + option + ": " + value, 2);
     }
 }
 
@@ -111,7 +115,7 @@ std::uint64_t parse_uint64_or_throw(const std::string& value, const std::string&
     if (const auto parsed = parse_optional_uint(value)) {
         return *parsed;
     }
-    throw CliError("Nilai tidak valid untuk " + option + ": " + value, 2);
+    throw CliError("Invalid value for " + option + ": " + value, 2);
 }
 
 void print_download_parameters(
@@ -120,20 +124,20 @@ void print_download_parameters(
     const DatasetProvider& provider,
     const Reporter& reporter
 ) {
-    reporter.section("Rencana download", dataset.display_name, true);
+    reporter.section("Download plan", dataset.display_name, true);
     print_key_value_rows(
         {
             {"dataset", fmt::format("{} ({})", dataset.id, dataset.display_name)},
             {"provider", provider.provider_info().name},
-            {"tahun", dataset.requested_year_label(request.start_year, request.end_year)},
+            {"years", dataset.requested_year_label(request.start_year, request.end_year)},
             {
-                "total file",
+                "total files",
                 std::to_string(dataset.requested_file_count(request.start_year, request.end_year)),
             },
             {"output", (request.output_dir / dataset.id).string()},
             {"overwrite", yes_no(request.overwrite)},
             {"resume", yes_no(request.resume)},
-            {"timeout", fmt::format("{:.1f} detik", request.timeout)},
+            {"timeout", fmt::format("{:.1f} seconds", request.timeout)},
             {"chunk size", format_bytes(request.chunk_size)},
             {"retries", std::to_string(request.retry_count)},
             {"base URL", dataset.base_url},
@@ -144,18 +148,18 @@ void print_download_parameters(
 
 void print_download_summary(const DownloadSummary& summary, const Reporter& reporter) {
     reporter.section(
-        "Ringkasan download",
-        fmt::format("dataset {} selesai diproses", summary.dataset.id),
+        "Download summary",
+        fmt::format("dataset {} processed", summary.dataset.id),
         true
     );
     print_key_value_rows(
         {
-            {"total target", std::to_string(summary.total_requested())},
+            {"total targets", std::to_string(summary.total_requested())},
             {"downloaded", std::to_string(summary.downloaded_count())},
             {"skipped", std::to_string(summary.skipped_count())},
             {"failed", std::to_string(summary.failed_count())},
             {"resumed", std::to_string(resumed_count(summary))},
-            {"bytes diterima", format_bytes(total_downloaded_bytes(summary))},
+            {"bytes received", format_bytes(total_downloaded_bytes(summary))},
         },
         reporter
     );
@@ -163,7 +167,7 @@ void print_download_summary(const DownloadSummary& summary, const Reporter& repo
     const auto failures = summary.failures();
     if (!failures.empty()) {
         reporter.blank_line(true);
-        reporter.section("Target gagal", {}, true);
+        reporter.section("Failed targets", {}, true);
         for (const auto& failure : failures) {
             reporter.print(
                 fmt::format("  {} -> {}", failure.target.file_name, failure.error_message),
@@ -174,11 +178,9 @@ void print_download_summary(const DownloadSummary& summary, const Reporter& repo
 
     reporter.blank_line(true);
     if (summary.failed_count() == 0) {
-        reporter.success("Semua target selesai tanpa error.");
+        reporter.success("All targets completed without errors.");
     } else {
-        reporter.warning(
-            fmt::format("{} target gagal dan perlu dicek ulang.", summary.failed_count())
-        );
+        reporter.warning(fmt::format("{} target(s) failed and should be checked.", summary.failed_count()));
     }
 }
 
@@ -218,7 +220,7 @@ DownloadCommandOptions parse_download_options(const std::vector<std::string>& ar
         } else if (!options.dataset_argument.has_value()) {
             options.dataset_argument = token;
         } else {
-            throw CliError("Argumen berlebih pada command download.", 2);
+            throw CliError("Too many arguments for the download command.", 2);
         }
     }
 
@@ -234,7 +236,7 @@ std::string resolve_dataset_name(
         const auto right = to_lower(trim(*options.dataset_option));
         if (left != right) {
             throw CliError(
-                "Gunakan salah satu dari argumen dataset atau --dataset, bukan dua nilai berbeda.",
+                "Use either the positional dataset argument or --dataset, not two different values.",
                 2
             );
         }
@@ -250,36 +252,40 @@ std::string resolve_dataset_name(
 }
 
 void print_download_help(const Reporter& reporter) {
-    reporter.section("Perintah download", "Unduh dataset memakai config dan flag saat ini.", true);
+    reporter.section(
+        "download command",
+        "Download a dataset using the current config and flags.",
+        true
+    );
     reporter.blank_line(true);
-    reporter.section("Cara pakai", {}, true);
+    reporter.section("Usage", {}, true);
     reporter.print(
         "  oceandl download [dataset] [--start-year YEAR --end-year YEAR] [options]",
         true
     );
 
     reporter.blank_line(true);
-    reporter.section("Opsi", {}, true);
+    reporter.section("Options", {}, true);
     print_key_value_rows(
         {
-            {"--dataset ID", "Pilih dataset tanpa argumen posisi"},
-            {"--start-year YEAR", "Tahun awal untuk dataset per-year"},
-            {"--end-year YEAR", "Tahun akhir untuk dataset per-year"},
-            {"--output-dir PATH", "Override direktori output"},
-            {"--overwrite", "Paksa unduh ulang file final yang valid"},
-            {"--no-overwrite", "Nonaktifkan overwrite"},
-            {"--resume", "Aktifkan resume partial download"},
-            {"--no-resume", "Matikan resume"},
-            {"--timeout DETIK", "Timeout request HTTP"},
-            {"--chunk-size BYTES", "Ukuran buffer terima HTTP yang diminta ke libcurl"},
-            {"--retries N", "Jumlah retry setelah kegagalan transient"},
-            {"--help, -h", "Tampilkan bantuan perintah download"},
+            {"--dataset ID", "Select a dataset without using the positional argument"},
+            {"--start-year YEAR", "Start year for per-year datasets"},
+            {"--end-year YEAR", "End year for per-year datasets"},
+            {"--output-dir PATH", "Override the output directory"},
+            {"--overwrite", "Force re-download of a valid final file"},
+            {"--no-overwrite", "Disable overwrite"},
+            {"--resume", "Enable partial download resume"},
+            {"--no-resume", "Disable resume"},
+            {"--timeout SECONDS", "HTTP request timeout"},
+            {"--chunk-size BYTES", "Requested libcurl HTTP receive buffer size"},
+            {"--retries N", "Retry count after transient failures"},
+            {"--help, -h", "Show help for the download command"},
         },
         reporter
     );
 
     reporter.blank_line(true);
-    reporter.section("Contoh", {}, true);
+    reporter.section("Examples", {}, true);
     reporter.print("  oceandl download gpcp", true);
     reporter.print("  oceandl download oisst --start-year 2024 --end-year 2025", true);
 }

@@ -18,7 +18,7 @@ FileValidationResult validate_netcdf_file(
     std::optional<std::uintmax_t> expected_size
 ) {
     if (!std::filesystem::exists(path) || !std::filesystem::is_regular_file(path)) {
-        return {.valid = false, .expected_size = expected_size, .reason = "file tidak ditemukan."};
+        return {.valid = false, .expected_size = expected_size, .reason = "file not found."};
     }
 
     std::error_code size_error;
@@ -32,7 +32,7 @@ FileValidationResult validate_netcdf_file(
             .valid = false,
             .actual_size = actual_size,
             .expected_size = expected_size,
-            .reason = "ukuran file tidak sesuai (" + std::to_string(actual_size) + " != "
+            .reason = "file size does not match (" + std::to_string(actual_size) + " != "
                 + std::to_string(*expected_size) + " bytes)."
         };
     }
@@ -42,7 +42,7 @@ FileValidationResult validate_netcdf_file(
             .valid = false,
             .actual_size = actual_size,
             .expected_size = expected_size,
-            .reason = "ukuran file terlalu kecil untuk NetCDF."
+            .reason = "file is too small to be a NetCDF payload."
         };
     }
 
@@ -52,7 +52,7 @@ FileValidationResult validate_netcdf_file(
             .valid = false,
             .actual_size = actual_size,
             .expected_size = expected_size,
-            .reason = "gagal membuka file."
+            .reason = "failed to open file."
         };
     }
 
@@ -63,18 +63,19 @@ FileValidationResult validate_netcdf_file(
             .valid = false,
             .actual_size = actual_size,
             .expected_size = expected_size,
-            .reason = "gagal membaca header file."
+            .reason = "failed to read file header."
         };
     }
 
-    const bool classic_netcdf = header[0] == 'C' && header[1] == 'D' && header[2] == 'F';
+    const bool classic_netcdf = header[0] == 'C' && header[1] == 'D' && header[2] == 'F'
+        && (header[3] == 1 || header[3] == 2 || header[3] == 5);
     const bool hdf5 = header == kNetcdfHdf5Magic;
     if (!classic_netcdf && !hdf5) {
         return {
             .valid = false,
             .actual_size = actual_size,
             .expected_size = expected_size,
-            .reason = "signature file tidak cocok dengan NetCDF/HDF5."
+            .reason = "file signature does not match NetCDF/HDF5."
         };
     }
 
@@ -99,7 +100,7 @@ FileValidationResult validate_dataset_file(
     return {
         .valid = false,
         .expected_size = expected_size,
-        .reason = "format validasi dataset tidak dikenali."
+        .reason = "unrecognized dataset validation format."
     };
 }
 

@@ -32,7 +32,7 @@ bool DatasetProvider::supports_dataset(const DatasetInfo& dataset) const {
 void DatasetProvider::validate_dataset(const DatasetInfo& dataset) const {
     if (!supports_dataset(dataset)) {
         throw std::invalid_argument(
-            "Dataset '" + dataset.id + "' tidak cocok dengan provider '" + provider_info().id + "'."
+            "Dataset '" + dataset.id + "' does not match provider '" + provider_info().id + "'."
         );
     }
 }
@@ -58,15 +58,28 @@ RemoteFileMetadata DatasetProvider::fetch_remote_metadata(
     const RemoteDownloadTarget& target,
     double timeout_seconds
 ) const {
-    const auto response = client.head(
-        {.url = target.url, .headers = build_download_headers(target), .timeout_seconds = timeout_seconds}
-    );
+    HttpResponse response;
+    try {
+        response = client.head(
+            {
+                .url = target.url,
+                .headers = build_download_headers(target),
+                .timeout_seconds = timeout_seconds,
+            }
+        );
+    } catch (const NetworkError&) {
+        return {};
+    }
 
     if (should_continue_without_head_metadata(response.status_code)) {
         return {};
     }
     if (response.status_code >= 400) {
-        throw HttpStatusError(response.status_code, target.url);
+        throw HttpStatusError(
+            response.status_code,
+            target.url,
+            parse_retry_after_seconds(response.headers)
+        );
     }
 
     RemoteFileMetadata metadata;

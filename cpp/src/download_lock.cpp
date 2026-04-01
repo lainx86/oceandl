@@ -58,12 +58,12 @@ std::string lock_conflict_message(
 ) {
     if (owner_pid.has_value()) {
         return fmt::format(
-            "target sedang dipakai proses lain: {} (pid {})",
+            "target is already being used by another process: {} (pid {})",
             target.file_name,
             *owner_pid
         );
     }
-    return fmt::format("target sedang dipakai proses lain: {}", target.file_name);
+    return fmt::format("target is already being used by another process: {}", target.file_name);
 }
 
 bool path_was_touched_recently(
@@ -159,7 +159,7 @@ void write_all(int fd, std::string_view payload) {
             if (errno == EINTR) {
                 continue;
             }
-            throw std::runtime_error("gagal menulis metadata lock.");
+            throw std::runtime_error("failed to write lock metadata.");
         }
         offset += static_cast<std::size_t>(written);
     }
@@ -167,10 +167,10 @@ void write_all(int fd, std::string_view payload) {
 
 void write_lock_owner_metadata(int fd) {
     if (::ftruncate(fd, 0) != 0) {
-        throw std::runtime_error("gagal mereset metadata lock.");
+        throw std::runtime_error("failed to reset lock metadata.");
     }
     if (::lseek(fd, 0, SEEK_SET) < 0) {
-        throw std::runtime_error("gagal memposisikan metadata lock.");
+        throw std::runtime_error("failed to seek lock metadata.");
     }
     write_all(fd, fmt::format("pid {}\n", current_process_id()));
 }
@@ -206,11 +206,11 @@ void recover_legacy_lock_directory(const DownloadTarget& target, const Reporter&
     std::filesystem::remove_all(lock_path, error);
     if (error || std::filesystem::exists(lock_path)) {
         throw std::runtime_error(
-            fmt::format("gagal membersihkan stale lock lama: {}", target.file_name)
+            fmt::format("failed to clean up stale legacy lock: {}", target.file_name)
         );
     }
 
-    reporter.warning(fmt::format("Menghapus stale lock lama {}", target.file_name));
+    reporter.warning(fmt::format("Removing stale legacy lock {}", target.file_name));
 }
 
 }  // namespace
@@ -224,7 +224,7 @@ TargetFileLock::TargetFileLock(const DownloadTarget& target, const Reporter& rep
     if (fd_ < 0) {
         throw std::runtime_error(
             fmt::format(
-                "gagal membuka lock file {}: {}",
+                "failed to open lock file {}: {}",
                 target.file_name,
                 std::strerror(errno)
             )
@@ -242,7 +242,7 @@ TargetFileLock::TargetFileLock(const DownloadTarget& target, const Reporter& rep
         }
         throw std::runtime_error(
             fmt::format(
-                "gagal mengunci target {}: {}",
+                "failed to lock target {}: {}",
                 target.file_name,
                 std::strerror(lock_error)
             )

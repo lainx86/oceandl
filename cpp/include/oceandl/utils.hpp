@@ -16,6 +16,7 @@ std::filesystem::path expand_user(const std::filesystem::path& path);
 void ensure_directory(const std::filesystem::path& path);
 void safe_remove(const std::filesystem::path& path);
 void safe_replace_file(const std::filesystem::path& source, const std::filesystem::path& destination);
+bool is_http_url(std::string_view value);
 std::string format_bytes(std::uint64_t size_in_bytes);
 std::optional<std::uint64_t> parse_optional_uint(std::string_view value);
 std::string join_strings(const std::vector<std::string>& values, std::string_view separator);

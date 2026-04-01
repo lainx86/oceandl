@@ -33,8 +33,19 @@ struct CliRuntime {
     AppConfig config;
     DatasetRegistry dataset_registry;
     ProviderRegistry provider_registry;
+    std::filesystem::path config_path = default_config_path();
+    std::vector<std::string> config_warnings;
+    bool config_loaded_from_file = false;
 };
 
+enum class RuntimeRequirement {
+    None,
+    Optional,
+    Required,
+};
+
+RuntimeRequirement classify_runtime_requirement(const std::vector<std::string>& args);
+CliRuntime default_cli_runtime();
 GlobalOptions parse_global_options(const std::vector<std::string>& args);
 CliRuntime load_cli_runtime(const std::filesystem::path& config_path);
 void print_help(const Reporter& reporter);

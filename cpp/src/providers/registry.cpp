@@ -41,7 +41,7 @@ std::shared_ptr<DatasetProvider> ProviderRegistry::get(const std::string& provid
         supported.push_back(id);
     }
     throw std::invalid_argument(
-        "Provider '" + provider_key + "' belum didukung. Provider tersedia: "
+        "Provider '" + provider_key + "' is not supported. Available providers: "
         + join_strings(supported, ", ") + "."
     );
 }

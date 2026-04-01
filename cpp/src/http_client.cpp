@@ -3,6 +3,7 @@
 #include <curl/curl.h>
 
 #include <algorithm>
+#include <cmath>
 #include <limits>
 #include <memory>
 
@@ -13,6 +14,11 @@
 namespace oceandl {
 
 namespace {
+
+constexpr double kDefaultConnectTimeoutSeconds = 15.0;
+constexpr long kLowSpeedLimitBytesPerSecond = 64;
+constexpr long kMaxLowSpeedObservationSeconds = 30;
+constexpr int kMaxRetryAfterSeconds = 300;
 
 struct CurlGlobalInit {
     CurlGlobalInit() {
@@ -102,10 +108,45 @@ size_t write_callback(char* data, size_t size, size_t nmemb, void* userdata) {
 }
 
 void set_common_options(CURL* curl, const HttpRequest& request, const std::string& user_agent) {
+    if (!std::isfinite(request.timeout_seconds) || request.timeout_seconds <= 0.0) {
+        throw std::invalid_argument("timeout_seconds must be finite and greater than 0.");
+    }
+
+    const auto to_timeout_ms = [](double seconds) {
+        const auto milliseconds = seconds * 1000.0;
+        return static_cast<long>(
+            std::min(milliseconds, static_cast<double>(std::numeric_limits<long>::max()))
+        );
+    };
+
     curl_easy_setopt(curl, CURLOPT_URL, request.url.c_str());
     curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
     curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1L);
-    curl_easy_setopt(curl, CURLOPT_TIMEOUT_MS, static_cast<long>(request.timeout_seconds * 1000.0));
+#if LIBCURL_VERSION_NUM >= 0x075500
+    curl_easy_setopt(curl, CURLOPT_PROTOCOLS_STR, "http,https");
+    curl_easy_setopt(curl, CURLOPT_REDIR_PROTOCOLS_STR, "http,https");
+#else
+    curl_easy_setopt(curl, CURLOPT_PROTOCOLS, CURLPROTO_HTTP | CURLPROTO_HTTPS);
+    curl_easy_setopt(curl, CURLOPT_REDIR_PROTOCOLS, CURLPROTO_HTTP | CURLPROTO_HTTPS);
+#endif
+    curl_easy_setopt(curl, CURLOPT_TIMEOUT_MS, to_timeout_ms(request.timeout_seconds));
+    curl_easy_setopt(
+        curl,
+        CURLOPT_CONNECTTIMEOUT_MS,
+        to_timeout_ms(std::min(request.timeout_seconds, kDefaultConnectTimeoutSeconds))
+    );
+    curl_easy_setopt(curl, CURLOPT_LOW_SPEED_LIMIT, kLowSpeedLimitBytesPerSecond);
+    curl_easy_setopt(
+        curl,
+        CURLOPT_LOW_SPEED_TIME,
+        std::max<long>(
+            1,
+            std::min(
+                static_cast<long>(std::ceil(request.timeout_seconds)),
+                kMaxLowSpeedObservationSeconds
+            )
+        )
+    );
     if (request.buffer_size_bytes != 0) {
         const auto requested_buffer_size = static_cast<long>(
             std::min<std::uint64_t>(
@@ -126,7 +167,7 @@ HttpResponse perform_request(
 ) {
     std::unique_ptr<CURL, decltype(&curl_easy_cleanup)> curl(curl_easy_init(), &curl_easy_cleanup);
     if (!curl) {
-        throw NetworkError("gagal menginisialisasi libcurl.", CURLE_FAILED_INIT);
+        throw NetworkError("failed to initialize libcurl.", CURLE_FAILED_INIT);
     }
 
     HeaderState state;
@@ -168,7 +209,7 @@ HttpResponse perform_request(
 
     if (code != CURLE_OK) {
         throw NetworkError(
-            fmt::format("{} untuk {}", curl_easy_strerror(code), request.url),
+            fmt::format("{} for {}", curl_easy_strerror(code), request.url),
             static_cast<int>(code)
         );
     }
@@ -192,10 +233,24 @@ int NetworkError::code() const {
     return code_;
 }
 
-HttpStatusError::HttpStatusError(int status_code, std::string url)
-    : std::runtime_error(fmt::format("HTTP {} untuk {}", status_code, url)),
+std::optional<int> parse_retry_after_seconds(const HeaderMap& headers) {
+    if (const auto iterator = headers.find("retry-after"); iterator != headers.end()) {
+        if (const auto value = parse_optional_uint(iterator->second)) {
+            return static_cast<int>(std::min<std::uint64_t>(*value, kMaxRetryAfterSeconds));
+        }
+    }
+    return std::nullopt;
+}
+
+HttpStatusError::HttpStatusError(
+    int status_code,
+    std::string url,
+    std::optional<int> retry_after_seconds
+)
+    : std::runtime_error(fmt::format("HTTP {} for {}", status_code, url)),
       status_code_(status_code),
-      url_(std::move(url)) {}
+      url_(std::move(url)),
+      retry_after_seconds_(retry_after_seconds) {}
 
 int HttpStatusError::status_code() const {
     return status_code_;
@@ -203,6 +258,10 @@ int HttpStatusError::status_code() const {
 
 const std::string& HttpStatusError::url() const {
     return url_;
+}
+
+std::optional<int> HttpStatusError::retry_after_seconds() const {
+    return retry_after_seconds_;
 }
 
 CurlHttpClient::CurlHttpClient(std::string user_agent) : user_agent_(std::move(user_agent)) {}

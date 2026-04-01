@@ -1,25 +1,26 @@
 # oceandl
 
-`oceandl` sekarang ditulis ulang sebagai CLI C++ untuk mengunduh dataset NetCDF dari NOAA PSL. Struktur project tetap memakai dataset registry dan provider abstraction, tetapi runtime utama sudah berpindah ke `libcurl` untuk transfer HTTP dan `tomlplusplus` untuk config.
+`oceandl` is a lightweight C++ CLI for downloading ocean/climate NetCDF datasets from NOAA PSL. The project is still in alpha: the current focus is safe download flow, practical resume behavior, and a codebase that stays simple to extend.
 
-## Fitur
+## Features
 
-- CLI native C++ dengan build `CMake`
-- Dataset registry terpisah dari provider implementation
-- Provider abstraction untuk multi-source di masa depan
-- Download dataset `per_year` dan `single_file`
+- Native C++ CLI with a `CMake` build
+- Dataset registry separated from provider implementation
+- Simple provider abstraction, currently with one built-in provider: NOAA PSL
+- `per_year` and `single_file` dataset downloads
 - Default dataset `oisst`
-- Default output root `~/data/oceandl`
-- `oceandl --version`, `providers`, `datasets`, `info`, dan `download`
-- `oceandl --help` dan `<command> --help`
-- Resume dari file `.part` jika server mendukung `Range`
-- Fallback aman ke download ulang penuh jika resume tidak tersedia
-- Skip file final yang sudah valid
-- Validasi ringan berbasis ukuran file dan signature NetCDF/HDF5
-- Config TOML sederhana
-- Mode `--verbose` dan `--quiet`
+- Platform-aware default output root (`~/data/oceandl` on Linux)
+- `oceandl --version`, `providers`, `datasets`, `info`, and `download`
+- `oceandl --help` and `<command> --help`
+- Resume from `.part` files when the server supports `Range`
+- Safe fallback to a full re-download when resume is unavailable
+- Skip valid final files
+- Lightweight validation based on file size and NetCDF/HDF5 signatures
+- Simple TOML config with strict type validation
+- `--verbose` and `--quiet` modes
+- `help`, `datasets`, `providers`, and `info` still work even when the local config is broken
 
-Dataset bawaan:
+Built-in datasets:
 
 - `oisst` - NOAA OISST Daily Mean
 - `gpcp` - GPCP Monthly Precipitation
@@ -34,28 +35,41 @@ Dataset bawaan:
 
 ## Build
 
-Dependency yang diasumsikan tersedia di sistem:
+Expected system dependencies:
 
 - CMake
-- compiler C++20
+- C++20 compiler
 - `libcurl`
 - `fmt`
 - `tomlplusplus`
 
-Build lokal:
+Platforms currently covered by CI:
+
+- Linux
+- macOS
+
+Windows path expansion and lock behavior are considered in the implementation, but there is no dedicated Windows CI job yet.
+
+Local build:
 
 ```bash
 cmake -S . -B build
 cmake --build build
 ```
 
-Jalankan test:
+Install the binary to a custom prefix:
+
+```bash
+cmake --install build --prefix /tmp/oceandl-install
+```
+
+Run tests:
 
 ```bash
 ctest --test-dir build --output-on-failure
 ```
 
-Jalankan binary:
+Run the binary:
 
 ```bash
 ./build/oceandl --help
@@ -65,21 +79,21 @@ Jalankan binary:
 ./build/oceandl download gpcp
 ```
 
-## Command
+## Commands
 
-Lihat provider:
+List providers:
 
 ```bash
 ./build/oceandl providers
 ```
 
-Lihat dataset:
+List datasets:
 
 ```bash
 ./build/oceandl datasets
 ```
 
-Lihat metadata dataset:
+Show dataset metadata:
 
 ```bash
 ./build/oceandl info oisst
@@ -87,44 +101,44 @@ Lihat metadata dataset:
 ./build/oceandl info air
 ```
 
-Download dataset default dari config:
+Download the default dataset from config:
 
 ```bash
 ./build/oceandl download --start-year 2024 --end-year 2025
 ```
 
-Download dataset eksplisit:
+Download an explicit dataset:
 
 ```bash
 ./build/oceandl download oisst --start-year 2024 --end-year 2025 --output-dir data
 ```
 
-Download dataset single-file:
+Download a single-file dataset:
 
 ```bash
 ./build/oceandl download gpcp
 ./build/oceandl download air
 ```
 
-Masih mendukung alias lama:
+The legacy alias is still supported:
 
 ```bash
 ./build/oceandl download --dataset oisst --start-year 2024 --end-year 2025
 ```
 
-Paksa unduh ulang file final valid:
+Force a re-download of a valid final file:
 
 ```bash
 ./build/oceandl download oisst --start-year 2024 --end-year 2025 --overwrite
 ```
 
-Matikan resume:
+Disable resume:
 
 ```bash
 ./build/oceandl download oisst --start-year 2024 --end-year 2025 --no-resume
 ```
 
-Atur timeout, chunk size, dan retry:
+Set timeout, chunk size, and retry count:
 
 ```bash
 ./build/oceandl download \
@@ -136,9 +150,9 @@ Atur timeout, chunk size, dan retry:
   --retries 5
 ```
 
-`chunk_size` dipakai sebagai ukuran buffer receive yang diminta ke `libcurl`.
+`chunk_size` is used as the requested receive buffer size passed to `libcurl`.
 
-Mode output:
+Output modes:
 
 ```bash
 ./build/oceandl --verbose download oisst --start-year 2024 --end-year 2024
@@ -147,13 +161,15 @@ Mode output:
 
 ## Config file
 
-Lokasi default:
+Default locations:
 
 ```text
-~/.config/oceandl/config.toml
+Linux   : ~/.config/oceandl/config.toml
+macOS   : ~/Library/Application Support/oceandl/config.toml
+Windows : %APPDATA%\oceandl\config.toml
 ```
 
-Contoh:
+Example:
 
 ```toml
 default_dataset = "oisst"
@@ -177,9 +193,15 @@ hgt_pressure = "https://downloads.psl.noaa.gov/Datasets/ncep.reanalysis2.derived
 omega_pressure = "https://downloads.psl.noaa.gov/Datasets/ncep.reanalysis2.derived/pressure"
 ```
 
-Semua flag CLI tetap meng-override config file.
+All CLI flags still override the config file.
 
-## Struktur output
+Notes:
+
+- Invalid config value types now fail fast instead of being silently ignored.
+- Unknown config keys are ignored with a warning.
+- URLs in `provider_base_urls` and `dataset_base_urls` must be `http://` or `https://`.
+
+## Output layout
 
 ```text
 ~/data/oceandl/
@@ -191,31 +213,33 @@ Semua flag CLI tetap meng-override config file.
     air.mon.mean.nc
 ```
 
-## Struktur source
+## Source layout
 
 - `cpp/src/cli.cpp`
-  Parsing CLI dan wiring aplikasi.
+  CLI entry point and runtime/config loading policy.
 - `cpp/src/downloader.cpp`
-  Core downloader untuk retry, resume, validasi, dan summary.
+  High-level download orchestration.
 - `cpp/src/catalog.cpp`
-  Dataset registry dan metadata bawaan.
+  Dataset registry and dataset URL composition from config/provider data.
+- `cpp/src/builtin_datasets.cpp`
+  The built-in dataset catalog shipped with the binary.
 - `cpp/src/providers/`
-  Provider abstraction dan implementasi NOAA PSL.
+  Provider abstraction and the NOAA PSL implementation.
 - `cpp/src/http_client.cpp`
-  HTTP transport berbasis `libcurl`.
+  `libcurl`-based HTTP transport.
 - `cpp/src/config.cpp`
-  Loader config TOML.
+  TOML config loader.
 - `cpp/src/validation.cpp`
-  Validasi NetCDF ringan.
+  Lightweight NetCDF validation.
 
-## Menambah dataset baru
+## Adding a new dataset
 
-1. Tambahkan metadata dataset baru di `cpp/src/catalog.cpp`.
-2. Arahkan `provider_key` ke provider yang relevan.
-3. Pilih `FileMode::PerYear` atau `FileMode::SingleFile`.
-4. Jika URL pattern masih cocok dengan provider yang ada, tidak perlu mengubah CLI/downloader.
-5. Jika source baru butuh perilaku khusus, tambahkan provider baru di `cpp/src/providers/` lalu registrasikan di `cpp/src/providers/registry.cpp`.
+1. Add the new dataset metadata in `cpp/src/builtin_datasets.cpp`.
+2. Point `provider_key` to the relevant provider.
+3. Choose `FileMode::PerYear` or `FileMode::SingleFile`.
+4. If the URL pattern still matches an existing provider, no CLI/downloader changes are needed.
+5. If the new source needs custom behavior, add a new provider in `cpp/src/providers/` and register it in `cpp/src/providers/registry.cpp`.
 
 ## License
 
-MIT. Lihat file `LICENSE`.
+MIT. See `LICENSE`.

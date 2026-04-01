@@ -80,7 +80,7 @@ void write_partial_metadata(
 ) {
     std::ofstream output(path, std::ios::binary | std::ios::trunc);
     if (!output) {
-        throw std::runtime_error("gagal menulis metadata file sementara.");
+        throw std::runtime_error("failed to write partial file metadata.");
     }
 
     output << "content_length ";
@@ -94,7 +94,7 @@ void write_partial_metadata(
     output << "last_modified " << std::quoted(remote_metadata.last_modified.value_or("")) << '\n';
 
     if (!output) {
-        throw std::runtime_error("gagal menyimpan metadata file sementara.");
+        throw std::runtime_error("failed to flush partial file metadata.");
     }
 }
 

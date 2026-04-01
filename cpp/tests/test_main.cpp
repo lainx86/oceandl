@@ -3,7 +3,6 @@
 #include <curl/curl.h>
 #include <cstdlib>
 #include <filesystem>
-#include <fcntl.h>
 #include <fstream>
 #include <functional>
 #include <iomanip>
@@ -11,10 +10,14 @@
 #include <optional>
 #include <sstream>
 #include <string>
-#include <sys/file.h>
-#include <unistd.h>
 #include <utility>
 #include <vector>
+
+#ifndef _WIN32
+#include <fcntl.h>
+#include <sys/file.h>
+#include <unistd.h>
+#endif
 
 #include "oceandl/catalog.hpp"
 #include "oceandl/cli.hpp"
@@ -60,6 +63,14 @@ class ScopedFileLock {
   public:
     explicit ScopedFileLock(const std::filesystem::path& path) {
         std::filesystem::create_directories(path.parent_path());
+#ifdef _WIN32
+        lock_path_ = path;
+        std::error_code error;
+        const bool created = std::filesystem::create_directory(lock_path_, error);
+        if (!created || error) {
+            throw std::runtime_error("failed to acquire test lock directory");
+        }
+#else
         fd_ = ::open(path.c_str(), O_RDWR | O_CREAT | O_CLOEXEC, 0600);
         if (fd_ < 0) {
             throw std::runtime_error("failed to open test lock file");
@@ -72,19 +83,29 @@ class ScopedFileLock {
                 "failed to acquire test lock: " + std::to_string(lock_error)
             );
         }
+#endif
     }
 
     ~ScopedFileLock() {
+#ifdef _WIN32
+        std::error_code error;
+        std::filesystem::remove(lock_path_, error);
+#else
         if (fd_ >= 0) {
             ::close(fd_);
         }
+#endif
     }
 
     ScopedFileLock(const ScopedFileLock&) = delete;
     ScopedFileLock& operator=(const ScopedFileLock&) = delete;
 
   private:
+#ifdef _WIN32
+    std::filesystem::path lock_path_;
+#else
     int fd_ = -1;
+#endif
 };
 
 int current_calendar_year() {
@@ -274,6 +295,14 @@ std::string request_header_value(const HttpRequest& request, const std::string& 
     return {};
 }
 
+bool path_has_lock_artifact(const std::filesystem::path& path) {
+#ifdef _WIN32
+    return std::filesystem::is_directory(path);
+#else
+    return std::filesystem::is_regular_file(path);
+#endif
+}
+
 bool test_registry_contains_expected_datasets() {
     const auto registry = build_default_dataset_registry(default_app_config());
     const auto& oisst = registry.get("oisst");
@@ -432,6 +461,21 @@ bool test_validation_accepts_minimal_netcdf() {
     return expect(validation.valid, "netcdf validation");
 }
 
+bool test_validation_rejects_invalid_netcdf_version_byte() {
+    TempDir temp_dir;
+    const auto path = temp_dir.path() / "invalid.nc";
+    auto payload = valid_netcdf_bytes();
+    payload[3] = 9;
+
+    std::ofstream output(path, std::ios::binary);
+    output.write(payload.data(), static_cast<std::streamsize>(payload.size()));
+    output.close();
+
+    const auto validation = validate_netcdf_file(path, payload.size());
+    return expect(!validation.valid, "invalid netcdf version byte rejected")
+        && expect_contains(validation.reason, "file signature does not match", "invalid netcdf version reason");
+}
+
 bool test_dataset_validation_uses_dataset_metadata() {
     TempDir temp_dir;
     auto dataset = fixture_dataset();
@@ -484,7 +528,7 @@ bool test_downloader_skips_existing_valid_file() {
     const auto lock_path = temp_dir.path() / dataset.id / "fixture.nc.lock";
     return expect(summary.skipped_count() == 1, "summary skipped count")
         && expect(get_calls == 0, "skip avoids get")
-        && expect(std::filesystem::is_regular_file(lock_path), "lock file persists after skip");
+        && expect(path_has_lock_artifact(lock_path), "lock artifact persists after skip");
 }
 
 bool test_downloader_redownloads_existing_file_when_remote_size_unknown() {
@@ -756,7 +800,7 @@ bool test_downloader_sends_if_range_when_resuming() {
         && expect(std::filesystem::exists(final_path), "output exists after resume")
         && expect(!std::filesystem::exists(part_path), "part removed after resume")
         && expect(!std::filesystem::exists(meta_path), "part metadata removed after resume")
-        && expect(std::filesystem::is_regular_file(lock_path), "lock file persists after resume")
+        && expect(path_has_lock_artifact(lock_path), "lock artifact persists after resume")
         && expect(request_has_header_prefix(last_get_request, "Range: bytes=16-"), "range header sent")
         && expect(
             request_header_value(last_get_request, "If-Range: ") == "\"fixture-v1\"",
@@ -794,7 +838,7 @@ bool test_downloader_fails_when_target_is_locked() {
     return expect(summary.failed_count() == 1, "summary failed count when target locked")
         && expect(head_calls == 0, "no head request when target locked")
         && expect(get_calls == 0, "no get request when target locked")
-        && expect_contains(summary.failures().at(0).error_message, "target sedang dipakai proses lain", "lock error message");
+        && expect_contains(summary.failures().at(0).error_message, "target is already being used by another process", "lock error message");
 }
 
 bool test_downloader_recovers_legacy_lock_directory_without_peer_process() {
@@ -842,7 +886,7 @@ bool test_downloader_recovers_legacy_lock_directory_without_peer_process() {
     return expect(summary.downloaded_count() == 1, "legacy lock without peer recovered")
         && expect(get_calls == 1, "get called after legacy lock cleanup")
         && expect(std::filesystem::exists(final_path), "output exists after legacy lock cleanup")
-        && expect(std::filesystem::is_regular_file(lock_path), "legacy lock replaced by lock file");
+        && expect(path_has_lock_artifact(lock_path), "legacy lock replaced by lock artifact");
 }
 
 bool test_safe_replace_file_restores_existing_output_on_failure() {
@@ -1002,6 +1046,56 @@ bool test_downloader_continues_when_head_metadata_is_blocked() {
         && expect(get_calls == 1, "get attempted once after HEAD fallback");
 }
 
+bool test_downloader_continues_when_head_metadata_has_network_error() {
+    TempDir temp_dir;
+    auto dataset = fixture_dataset("fixture_head");
+    auto request = fixture_request(temp_dir.path());
+    const auto payload = valid_netcdf_bytes();
+
+    int head_calls = 0;
+    int get_calls = 0;
+    FakeHttpClient client;
+    client.on_head = [&](const HttpRequest&) {
+        ++head_calls;
+        throw NetworkError("head timeout", CURLE_OPERATION_TIMEDOUT);
+        return HttpResponse{};
+    };
+    client.on_get = [&](const HttpRequest& request, ResponseHandler& handler) {
+        ++get_calls;
+        const bool has_range = request_has_header_prefix(request, "Range: ");
+        if (has_range) {
+            throw std::runtime_error("fallback GET should not attempt resume after head error");
+        }
+
+        handler.on_response_start(
+            HttpResponse{
+                .status_code = 200,
+                .headers = {{"content-length", std::to_string(payload.size())}},
+                .bytes_transferred = 0,
+            }
+        );
+        handler.on_chunk(std::string_view(payload.data(), payload.size()));
+        return HttpResponse{
+            .status_code = 200,
+            .headers = {{"content-length", std::to_string(payload.size())}},
+            .bytes_transferred = payload.size(),
+        };
+    };
+
+    std::ostringstream out;
+    std::ostringstream err;
+    Reporter reporter(out, err, Verbosity::Quiet);
+    Downloader downloader(client, reporter);
+    MetadataFallbackFixtureProvider provider;
+
+    const auto summary = downloader.download(request, dataset, provider);
+    const auto final_path = temp_dir.path() / dataset.id / "fixture.nc";
+    return expect(summary.downloaded_count() == 1, "download succeeds after HEAD network fallback")
+        && expect(std::filesystem::exists(final_path), "output exists after HEAD network fallback")
+        && expect(head_calls == 1, "head attempted once before network fallback")
+        && expect(get_calls == 1, "get attempted once after HEAD network fallback");
+}
+
 bool test_downloader_propagates_chunk_size_to_http_client() {
     TempDir temp_dir;
     auto dataset = fixture_dataset();
@@ -1077,6 +1171,60 @@ bool test_config_load_merges_dataset_urls() {
         && expect(loaded.provider_base_urls.contains("psl"), "default provider url merge");
 }
 
+bool test_config_load_rejects_invalid_scalar_type() {
+    TempDir temp_dir;
+    const auto config_path = temp_dir.path() / "config.toml";
+    std::ofstream config(config_path);
+    config << "timeout = \"fast\"\n";
+    config.close();
+
+    try {
+        (void)load_config(config_path);
+        return expect(false, "invalid timeout type should fail");
+    } catch (const std::exception& error) {
+        return expect_contains(error.what(), "config 'timeout' must be a number", "invalid timeout type message");
+    }
+}
+
+bool test_config_load_rejects_invalid_url_value() {
+    TempDir temp_dir;
+    const auto config_path = temp_dir.path() / "config.toml";
+    std::ofstream config(config_path);
+    config << "[provider_base_urls]\npsl = \"not-a-url\"\n";
+    config.close();
+
+    try {
+        (void)load_config(config_path);
+        return expect(false, "invalid provider url should fail");
+    } catch (const std::exception& error) {
+        return expect_contains(error.what(), "provider_base_urls.psl must be a valid http/https URL", "invalid provider url message");
+    }
+}
+
+bool test_config_load_reports_unknown_keys() {
+    TempDir temp_dir;
+    const auto config_path = temp_dir.path() / "config.toml";
+    std::ofstream config(config_path);
+    config << "default_dataset = \"gpcp\"\nunknown_key = \"value\"\n";
+    config.close();
+
+    const auto loaded = load_config_with_diagnostics(config_path);
+    return expect(loaded.config.default_dataset == "gpcp", "known config value still loaded")
+        && expect(loaded.loaded_from_file, "config report marks file as loaded")
+        && expect(loaded.warnings.size() == 1, "unknown key emitted one warning")
+        && expect_contains(loaded.warnings.front(), "unknown_key", "unknown key warning contains key name");
+}
+
+bool test_parse_retry_after_seconds_clamps_numeric_header() {
+    const HeaderMap headers{
+        {"retry-after", "600"},
+    };
+
+    const auto retry_after = parse_retry_after_seconds(headers);
+    return expect(retry_after.has_value(), "retry-after parsed from header")
+        && expect(*retry_after == 300, "retry-after clamped to supported maximum");
+}
+
 bool test_catalog_builds_dataset_urls_from_provider_base_url() {
     auto config = default_app_config();
     config.provider_base_urls["psl"] = "https://mirror.example.test/";
@@ -1116,18 +1264,18 @@ bool test_reporter_structures_plain_output_without_color() {
     std::ostringstream err;
     Reporter reporter(out, err, Verbosity::Normal);
 
-    reporter.section("Contoh");
-    reporter.field("status", "siap", 8);
+    reporter.section("Example");
+    reporter.field("status", "ready", 8);
     reporter.progress("demo.nc", 512, 1024);
     reporter.finish_progress();
-    reporter.success("selesai");
-    reporter.error("gagal");
+    reporter.success("done");
+    reporter.error("failed");
 
-    return expect_contains(out.str(), "== Contoh ==", "reporter section heading")
+    return expect_contains(out.str(), "== Example ==", "reporter section heading")
         && expect_contains(out.str(), "status", "reporter field label")
-        && expect_contains(out.str(), "[ok] selesai", "reporter success prefix")
+        && expect_contains(out.str(), "[ok] done", "reporter success prefix")
         && expect(out.str().find('\r') == std::string::npos, "reporter progress disabled on non-tty")
-        && expect_contains(err.str(), "[err] gagal", "reporter error prefix");
+        && expect_contains(err.str(), "[err] failed", "reporter error prefix");
 }
 
 bool test_cli_shows_global_help_for_help_flag() {
@@ -1151,9 +1299,44 @@ bool test_cli_shows_download_help() {
     const auto exit_code = app.run({"download", "--help"}, out, err);
 
     return expect(exit_code == 0, "cli exit code for download help")
-        && expect_contains(out.str(), "Perintah download", "download help header shown")
+        && expect_contains(out.str(), "download command", "download help header shown")
         && expect_contains(out.str(), "--chunk-size BYTES", "download help lists chunk size option")
         && expect(err.str().empty(), "download help does not write errors");
+}
+
+bool test_cli_shows_help_even_when_config_is_invalid() {
+    TempDir temp_dir;
+    const auto config_path = temp_dir.path() / "config.toml";
+    std::ofstream config(config_path);
+    config << "timeout = \"fast\"\n";
+    config.close();
+
+    CliApp app;
+    std::ostringstream out;
+    std::ostringstream err;
+    const auto exit_code = app.run({"--config", config_path.string(), "download", "--help"}, out, err);
+
+    return expect(exit_code == 0, "help should succeed with invalid config")
+        && expect_contains(out.str(), "download command", "download help still shown with invalid config")
+        && expect(err.str().empty(), "invalid config should not block help");
+}
+
+bool test_cli_info_falls_back_when_config_is_invalid() {
+    TempDir temp_dir;
+    const auto config_path = temp_dir.path() / "config.toml";
+    std::ofstream config(config_path);
+    config << "[provider_base_urls]\npsl = 123\n";
+    config.close();
+
+    CliApp app;
+    std::ostringstream out;
+    std::ostringstream err;
+    const auto exit_code = app.run({"--config", config_path.string(), "info", "gpcp"}, out, err);
+
+    return expect(exit_code == 0, "info should fall back when config invalid")
+        && expect_contains(out.str(), "Config is invalid; using built-in metadata instead", "fallback warning shown")
+        && expect_contains(out.str(), "Dataset gpcp", "info output still shown")
+        && expect(err.str().empty(), "fallback should not write hard error");
 }
 
 bool test_cli_rejects_invalid_year_suffix() {
@@ -1175,7 +1358,7 @@ bool test_cli_rejects_invalid_year_suffix() {
     );
 
     return expect(exit_code == 2, "cli exit code for invalid year suffix")
-        && expect_contains(err.str(), "Nilai tidak valid untuk --start-year: 2024abc", "cli invalid year message");
+        && expect_contains(err.str(), "Invalid value for --start-year: 2024abc", "cli invalid year message");
 }
 
 bool test_cli_rejects_invalid_timeout_suffix() {
@@ -1195,7 +1378,18 @@ bool test_cli_rejects_invalid_timeout_suffix() {
     );
 
     return expect(exit_code == 2, "cli exit code for invalid timeout suffix")
-        && expect_contains(err.str(), "Nilai tidak valid untuk --timeout: 30s", "cli invalid timeout message");
+        && expect_contains(err.str(), "Invalid value for --timeout: 30s", "cli invalid timeout message");
+}
+
+bool test_cli_rejects_non_finite_timeout() {
+    CliApp app;
+    std::ostringstream out;
+    std::ostringstream err;
+
+    const auto exit_code = app.run({"download", "gpcp", "--timeout", "inf"}, out, err);
+
+    return expect(exit_code == 2, "cli exit code for non-finite timeout")
+        && expect_contains(err.str(), "Invalid value for --timeout: inf", "cli non-finite timeout message");
 }
 
 bool test_cli_rejects_year_flags_for_single_file_dataset() {
@@ -1220,7 +1414,7 @@ bool test_cli_rejects_year_flags_for_single_file_dataset() {
     );
 
     return expect(exit_code == 2, "cli exit code for single-file year flags")
-        && expect_contains(err.str(), "tidak menerima --start-year dan --end-year", "single-file year flag message");
+        && expect_contains(err.str(), "does not accept --start-year or --end-year", "single-file year flag message");
 }
 
 bool test_dataset_rejects_future_and_excessive_year_ranges() {
@@ -1258,6 +1452,7 @@ int main() {
         {"psl_provider_targets", test_psl_provider_targets},
         {"download_target_layout_is_centralized", test_download_target_layout_is_centralized},
         {"validation_accepts_minimal_netcdf", test_validation_accepts_minimal_netcdf},
+        {"validation_rejects_invalid_netcdf_version_byte", test_validation_rejects_invalid_netcdf_version_byte},
         {"dataset_validation_uses_dataset_metadata", test_dataset_validation_uses_dataset_metadata},
         {"downloader_skips_existing_valid_file", test_downloader_skips_existing_valid_file},
         {"downloader_redownloads_existing_file_when_remote_size_unknown", test_downloader_redownloads_existing_file_when_remote_size_unknown},
@@ -1271,16 +1466,24 @@ int main() {
         {"downloader_retries_transient_network_error", test_downloader_retries_transient_network_error},
         {"downloader_does_not_retry_permanent_network_error", test_downloader_does_not_retry_permanent_network_error},
         {"downloader_continues_when_head_metadata_is_blocked", test_downloader_continues_when_head_metadata_is_blocked},
+        {"downloader_continues_when_head_metadata_has_network_error", test_downloader_continues_when_head_metadata_has_network_error},
         {"downloader_propagates_chunk_size_to_http_client", test_downloader_propagates_chunk_size_to_http_client},
         {"config_load_merges_dataset_urls", test_config_load_merges_dataset_urls},
+        {"config_load_rejects_invalid_scalar_type", test_config_load_rejects_invalid_scalar_type},
+        {"config_load_rejects_invalid_url_value", test_config_load_rejects_invalid_url_value},
+        {"config_load_reports_unknown_keys", test_config_load_reports_unknown_keys},
+        {"parse_retry_after_seconds_clamps_numeric_header", test_parse_retry_after_seconds_clamps_numeric_header},
         {"catalog_builds_dataset_urls_from_provider_base_url", test_catalog_builds_dataset_urls_from_provider_base_url},
         {"catalog_prefers_legacy_dataset_url_override", test_catalog_prefers_legacy_dataset_url_override},
         {"version_constant_present", test_version_constant_present},
         {"reporter_structures_plain_output_without_color", test_reporter_structures_plain_output_without_color},
         {"cli_shows_global_help_for_help_flag", test_cli_shows_global_help_for_help_flag},
         {"cli_shows_download_help", test_cli_shows_download_help},
+        {"cli_shows_help_even_when_config_is_invalid", test_cli_shows_help_even_when_config_is_invalid},
+        {"cli_info_falls_back_when_config_is_invalid", test_cli_info_falls_back_when_config_is_invalid},
         {"cli_rejects_invalid_year_suffix", test_cli_rejects_invalid_year_suffix},
         {"cli_rejects_invalid_timeout_suffix", test_cli_rejects_invalid_timeout_suffix},
+        {"cli_rejects_non_finite_timeout", test_cli_rejects_non_finite_timeout},
         {"cli_rejects_year_flags_for_single_file_dataset", test_cli_rejects_year_flags_for_single_file_dataset},
         {"dataset_rejects_future_and_excessive_year_ranges", test_dataset_rejects_future_and_excessive_year_ranges},
     };

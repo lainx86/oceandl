@@ -2,6 +2,7 @@
 
 #include <curl/curl.h>
 
+#include <algorithm>
 #include <chrono>
 #include <filesystem>
 #include <fstream>
@@ -49,6 +50,15 @@ bool is_retryable_network_code(int code) {
     }
 }
 
+int retry_wait_seconds_for(const std::exception& error, int attempt) {
+    if (const auto* http_error = dynamic_cast<const HttpStatusError*>(&error)) {
+        if (http_error->retry_after_seconds().has_value()) {
+            return std::max(1, *http_error->retry_after_seconds());
+        }
+    }
+    return std::min(1 << (attempt - 1), 8);
+}
+
 class FileResponseHandler final : public ResponseHandler {
   public:
     FileResponseHandler(
@@ -74,7 +84,7 @@ class FileResponseHandler final : public ResponseHandler {
         if (attempted_resume_ && response.status_code != 206) {
             reporter_.warning(
                 fmt::format(
-                    "Resume unsupported {} (server mengabaikan Range, mulai dari awal)",
+                    "Resume unavailable {} (server ignored Range and restarted from byte 0)",
                     target_.file_name
                 )
             );
@@ -94,7 +104,7 @@ class FileResponseHandler final : public ResponseHandler {
 
         stream_.open(target_.temp_path(), mode);
         if (!stream_) {
-            throw std::runtime_error("gagal membuka file sementara untuk ditulis.");
+            throw std::runtime_error("failed to open the temporary file for writing.");
         }
 
         render_progress(true);
@@ -201,7 +211,7 @@ DownloadResult TargetDownloadExecutor::run(const DownloadTarget& target) const {
                 remove_partial_state(target);
                 reporter_->success(
                     fmt::format(
-                        "Recovered {} dari file sementara yang valid (resume lengkap)",
+                        "Recovered {} from a valid partial file (resume complete)",
                         target.file_name
                     )
                 );
@@ -219,7 +229,7 @@ DownloadResult TargetDownloadExecutor::run(const DownloadTarget& target) const {
                 write_partial_metadata(target.temp_metadata_path(), remote_metadata);
             }
 
-            reporter_->detail(fmt::format("Mulai transfer {} -> {}", target.file_name, target.url));
+            reporter_->detail(fmt::format("Starting transfer {} -> {}", target.file_name, target.url));
             const auto [bytes_downloaded, resumed] =
                 stream_download(target, remote_metadata, transfer_plan);
 
@@ -252,10 +262,10 @@ DownloadResult TargetDownloadExecutor::run(const DownloadTarget& target) const {
                 remove_partial_state(target);
             }
             if (is_retryable(error) && attempt < total_attempts) {
-                const auto wait_seconds = std::min(1 << (attempt - 1), 8);
+                const auto wait_seconds = retry_wait_seconds_for(error, attempt);
                 reporter_->warning(
                     fmt::format(
-                        "Retry {} dalam {}s (attempt {}/{}): {}",
+                        "Retrying {} in {}s (attempt {}/{}): {}",
                         target.file_name,
                         wait_seconds,
                         attempt + 1,
@@ -277,7 +287,7 @@ DownloadResult TargetDownloadExecutor::run(const DownloadTarget& target) const {
         .bytes_downloaded = 0,
         .attempts = total_attempts,
         .resumed = false,
-        .error_message = "download berhenti tanpa hasil.",
+        .error_message = "download stopped without a result.",
     };
 }
 
@@ -315,7 +325,7 @@ std::pair<std::uint64_t, bool> TargetDownloadExecutor::stream_download(
         if (!remote_metadata.content_length.has_value()) {
             remove_partial_state(target);
             throw DownloadIntegrityError(
-                "server menolak Range request dan ukuran remote tidak tersedia untuk verifikasi aman."
+                "server rejected the Range request and the remote size is unavailable for safe verification."
             );
         }
         const auto validation =
@@ -325,12 +335,16 @@ std::pair<std::uint64_t, bool> TargetDownloadExecutor::stream_download(
         }
         remove_partial_state(target);
         throw DownloadIntegrityError(
-            "server menolak Range request dan file sementara tidak valid."
+            "server rejected the Range request and the partial file is invalid."
         );
     }
 
     if (response.status_code >= 400) {
-        throw HttpStatusError(response.status_code, target.url);
+        throw HttpStatusError(
+            response.status_code,
+            target.url,
+            parse_retry_after_seconds(response.headers)
+        );
     }
 
     const bool resumed = attempted_resume && response.status_code == 206;
@@ -340,7 +354,7 @@ std::pair<std::uint64_t, bool> TargetDownloadExecutor::stream_download(
     if (expected_size.has_value() && actual_size != *expected_size) {
         throw DownloadIntegrityError(
             fmt::format(
-                "ukuran file tidak sesuai header ({} != {} bytes).",
+                "file size does not match the response headers ({} != {} bytes).",
                 actual_size,
                 *expected_size
             )
@@ -351,7 +365,7 @@ std::pair<std::uint64_t, bool> TargetDownloadExecutor::stream_download(
     if (!validation.valid) {
         throw DownloadPayloadError(
             validation.reason.empty()
-                ? "payload selesai diunduh tetapi tidak lolos validasi."
+                ? "download completed but the payload failed validation."
                 : validation.reason
         );
     }
@@ -370,7 +384,7 @@ std::optional<DownloadResult> TargetDownloadExecutor::maybe_skip_existing_output
     if (!remote_metadata.content_length.has_value()) {
         reporter_->warning(
             fmt::format(
-                "Cannot trust existing file {} tanpa ukuran remote; unduh ulang untuk verifikasi",
+                "Cannot trust existing file {} without the remote size; downloading again for verification",
                 target.file_name
             )
         );
@@ -381,7 +395,7 @@ std::optional<DownloadResult> TargetDownloadExecutor::maybe_skip_existing_output
         validate_dataset_file(*dataset_, target.output_path, remote_metadata.content_length);
     if (validation.valid && !request_->overwrite) {
         remove_partial_state(target);
-        reporter_->info(fmt::format("Skip {} (file valid sudah ada)", target.file_name));
+        reporter_->info(fmt::format("Skipping {} (a valid file already exists)", target.file_name));
         return DownloadResult{
             .target = target,
             .status = DownloadStatus::Skipped,
@@ -394,14 +408,14 @@ std::optional<DownloadResult> TargetDownloadExecutor::maybe_skip_existing_output
 
     if (validation.valid) {
         reporter_->info(
-            fmt::format("Overwrite {} (file valid akan diunduh ulang)", target.file_name)
+            fmt::format("Overwriting {} (the valid file will be downloaded again)", target.file_name)
         );
     } else {
         reporter_->warning(
             fmt::format(
                 "Invalid existing file {}: {}",
                 target.file_name,
-                validation.reason.empty() ? "validasi gagal" : validation.reason
+                validation.reason.empty() ? "validation failed" : validation.reason
             )
         );
     }
@@ -429,7 +443,7 @@ TransferPlan TargetDownloadExecutor::prepare_transfer_plan(
     if (remote_metadata.content_length.has_value() && current_size > *remote_metadata.content_length) {
         reporter_->warning(
             fmt::format(
-                "Discarding stale partial {} (ukuran file sementara melebihi ukuran remote)",
+                "Discarding stale partial {} (the partial file is larger than the remote file)",
                 target.file_name
             )
         );
@@ -440,7 +454,7 @@ TransferPlan TargetDownloadExecutor::prepare_transfer_plan(
     if (!has_remote_identity(remote_metadata)) {
         reporter_->warning(
             fmt::format(
-                "Resume unavailable {} (metadata remote tidak cukup untuk verifikasi aman)",
+                "Resume unavailable {} (remote metadata is insufficient for safe verification)",
                 target.file_name
             )
         );
@@ -452,7 +466,7 @@ TransferPlan TargetDownloadExecutor::prepare_transfer_plan(
     if (!partial_metadata.has_value()) {
         reporter_->warning(
             fmt::format(
-                "Discarding partial {} (metadata resume tidak ditemukan atau rusak)",
+                "Discarding partial {} (resume metadata is missing or corrupted)",
                 target.file_name
             )
         );
@@ -463,7 +477,7 @@ TransferPlan TargetDownloadExecutor::prepare_transfer_plan(
     if (!partial_metadata_matches_remote(*partial_metadata, remote_metadata)) {
         reporter_->warning(
             fmt::format(
-                "Discarding partial {} (metadata remote berubah sejak download sebelumnya)",
+                "Discarding partial {} (remote metadata changed since the previous download)",
                 target.file_name
             )
         );
@@ -489,7 +503,7 @@ TransferPlan TargetDownloadExecutor::prepare_transfer_plan(
     if (remote_metadata.accepts_ranges.has_value() && !*remote_metadata.accepts_ranges) {
         reporter_->warning(
             fmt::format(
-                "Resume unavailable {} (server tidak mendukung Range, restart aman)",
+                "Resume unavailable {} (server does not support Range; restarting safely)",
                 target.file_name
             )
         );
@@ -497,7 +511,7 @@ TransferPlan TargetDownloadExecutor::prepare_transfer_plan(
         return {};
     }
 
-    reporter_->detail(fmt::format("Resume {} dari byte {}", target.file_name, current_size));
+    reporter_->detail(fmt::format("Resuming {} from byte {}", target.file_name, current_size));
     return {
         .start_byte = current_size,
         .resumed = true,

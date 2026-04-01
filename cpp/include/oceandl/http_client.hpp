@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <map>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -44,15 +45,23 @@ class NetworkError : public std::runtime_error {
 
 class HttpStatusError : public std::runtime_error {
   public:
-    HttpStatusError(int status_code, std::string url);
+    HttpStatusError(
+        int status_code,
+        std::string url,
+        std::optional<int> retry_after_seconds = std::nullopt
+    );
 
     int status_code() const;
     const std::string& url() const;
+    std::optional<int> retry_after_seconds() const;
 
   private:
     int status_code_;
     std::string url_;
+    std::optional<int> retry_after_seconds_;
 };
+
+std::optional<int> parse_retry_after_seconds(const HeaderMap& headers);
 
 class IHttpClient {
   public:

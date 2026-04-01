@@ -2,6 +2,8 @@ cmake_minimum_required(VERSION 3.24)
 
 project(oceandl VERSION 0.2.0 LANGUAGES CXX)
 
+include(GNUInstallDirs)
+
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
@@ -36,6 +38,9 @@ target_link_libraries(oceandl_lib PUBLIC CURL::libcurl fmt::fmt tomlplusplus::to
 
 add_executable(oceandl cpp/src/main.cpp)
 target_link_libraries(oceandl PRIVATE oceandl_lib)
+
+install(TARGETS oceandl RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+install(FILES README.md LICENSE DESTINATION ${CMAKE_INSTALL_DOCDIR})
 
 add_executable(oceandl_tests cpp/tests/test_main.cpp)
 target_link_libraries(oceandl_tests PRIVATE oceandl_lib)

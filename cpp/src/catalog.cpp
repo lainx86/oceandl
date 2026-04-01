@@ -41,7 +41,7 @@ std::string resolve_dataset_base_url(
     }
 
     throw std::invalid_argument(
-        "provider_base_urls belum punya entry untuk provider '" + provider_key + "'."
+        "provider_base_urls does not contain an entry for provider '" + provider_key + "'."
     );
 }
 
@@ -60,7 +60,8 @@ DatasetRegistry::DatasetRegistry(std::vector<DatasetInfo> datasets, std::string 
             supported.push_back(id);
         }
         throw std::invalid_argument(
-            "default_dataset '" + default_dataset + "' tidak ditemukan di registry. Dataset tersedia: "
+            "default_dataset '" + default_dataset
+            + "' was not found in the registry. Available datasets: "
             + join_strings(supported, ", ") + "."
         );
     }
@@ -91,7 +92,7 @@ const DatasetInfo& DatasetRegistry::get(const std::string& dataset_id) const {
     }
 
     throw std::invalid_argument(
-        "Dataset '" + dataset_id + "' belum didukung. Dataset tersedia: "
+        "Dataset '" + dataset_id + "' is not supported. Available datasets: "
         + join_strings(supported, ", ") + "."
     );
 }

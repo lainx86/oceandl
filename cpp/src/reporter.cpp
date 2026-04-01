@@ -87,14 +87,14 @@ bool Reporter::is_verbose() const {
 void Reporter::print(const std::string& message, bool force) const {
     if (force || !is_quiet()) {
         clear_live_line();
-        (*out_) << message << '\n';
+        (*out_) << message << '\n' << std::flush;
     }
 }
 
 void Reporter::blank_line(bool force) const {
     if (force || !is_quiet()) {
         clear_live_line();
-        (*out_) << '\n';
+        (*out_) << '\n' << std::flush;
     }
 }
 
@@ -109,6 +109,7 @@ void Reporter::section(const std::string& title, const std::string& subtitle, bo
     if (!subtitle.empty()) {
         (*out_) << paint(subtitle, Tone::Muted, StreamTarget::Out) << '\n';
     }
+    (*out_) << std::flush;
 }
 
 void Reporter::field(
@@ -128,7 +129,7 @@ void Reporter::field(
     clear_live_line();
     const auto padded_label = fmt::format("{:<{}}", label, label_width);
     (*out_) << "    " << paint(padded_label, Tone::Muted, StreamTarget::Out) << "  " << value
-            << '\n';
+            << '\n' << std::flush;
 }
 
 void Reporter::progress(
@@ -189,7 +190,7 @@ void Reporter::info(const std::string& message) const {
     if (!is_quiet()) {
         clear_live_line();
         (*out_) << paint("[info]", Tone::Accent, StreamTarget::Out, true) << ' ' << message
-                << '\n';
+                << '\n' << std::flush;
     }
 }
 
@@ -197,7 +198,7 @@ void Reporter::detail(const std::string& message) const {
     if (is_verbose()) {
         clear_live_line();
         (*out_) << "  " << paint("[debug]", Tone::Detail, StreamTarget::Out, true) << ' '
-                << message << '\n';
+                << message << '\n' << std::flush;
     }
 }
 
@@ -205,7 +206,7 @@ void Reporter::success(const std::string& message) const {
     if (!is_quiet()) {
         clear_live_line();
         (*out_) << paint("[ok]", Tone::Success, StreamTarget::Out, true) << ' ' << message
-                << '\n';
+                << '\n' << std::flush;
     }
 }
 
@@ -213,13 +214,14 @@ void Reporter::warning(const std::string& message) const {
     if (!is_quiet()) {
         clear_live_line();
         (*out_) << paint("[warn]", Tone::Warning, StreamTarget::Out, true) << ' ' << message
-                << '\n';
+                << '\n' << std::flush;
     }
 }
 
 void Reporter::error(const std::string& message) const {
     clear_live_line();
-    (*err_) << paint("[err]", Tone::Error, StreamTarget::Err, true) << ' ' << message << '\n';
+    (*err_) << paint("[err]", Tone::Error, StreamTarget::Err, true) << ' ' << message << '\n'
+            << std::flush;
 }
 
 std::string Reporter::paint(
