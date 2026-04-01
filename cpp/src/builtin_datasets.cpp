@@ -11,7 +11,7 @@ const std::vector<BuiltinDatasetSpec>& builtin_dataset_specs() {
                 "Daily mean sea surface temperature NetCDF files from NOAA Optimum "
                 "Interpolation SST V2.1.",
             .provider_key = "psl",
-            .default_base_url = "https://downloads.psl.noaa.gov/Datasets/noaa.oisst.v2.highres",
+            .default_path = "Datasets/noaa.oisst.v2.highres",
             .filename_pattern = "sst.day.mean.{year}.nc",
             .file_mode = FileMode::PerYear,
             .payload_format = DatasetPayloadFormat::Netcdf,
@@ -25,7 +25,7 @@ const std::vector<BuiltinDatasetSpec>& builtin_dataset_specs() {
                 "Global monthly precipitation estimates from the Global Precipitation "
                 "Climatology Project.",
             .provider_key = "psl",
-            .default_base_url = "https://downloads.psl.noaa.gov/Datasets/gpcp",
+            .default_path = "Datasets/gpcp",
             .filename_pattern = "precip.mon.mean.nc",
             .file_mode = FileMode::SingleFile,
             .payload_format = DatasetPayloadFormat::Netcdf,
@@ -38,8 +38,7 @@ const std::vector<BuiltinDatasetSpec>& builtin_dataset_specs() {
             .description =
                 "Monthly mean near-surface air temperature from the NCEP/NCAR Reanalysis.",
             .provider_key = "psl",
-            .default_base_url =
-                "https://downloads.psl.noaa.gov/Datasets/ncep.reanalysis.derived/surface",
+            .default_path = "Datasets/ncep.reanalysis.derived/surface",
             .filename_pattern = "air.mon.mean.nc",
             .file_mode = FileMode::SingleFile,
             .payload_format = DatasetPayloadFormat::Netcdf,
@@ -52,8 +51,7 @@ const std::vector<BuiltinDatasetSpec>& builtin_dataset_specs() {
             .description =
                 "Monthly mean sea level pressure from the NCEP/NCAR Reanalysis.",
             .provider_key = "psl",
-            .default_base_url =
-                "https://downloads.psl.noaa.gov/Datasets/ncep.reanalysis.derived/surface",
+            .default_path = "Datasets/ncep.reanalysis.derived/surface",
             .filename_pattern = "mslp.mon.mean.nc",
             .file_mode = FileMode::SingleFile,
             .payload_format = DatasetPayloadFormat::Netcdf,
@@ -66,8 +64,7 @@ const std::vector<BuiltinDatasetSpec>& builtin_dataset_specs() {
             .description =
                 "Monthly mean near-surface zonal wind from the NCEP/NCAR Reanalysis.",
             .provider_key = "psl",
-            .default_base_url =
-                "https://downloads.psl.noaa.gov/Datasets/ncep.reanalysis.derived/surface",
+            .default_path = "Datasets/ncep.reanalysis.derived/surface",
             .filename_pattern = "uwnd.mon.mean.nc",
             .file_mode = FileMode::SingleFile,
             .payload_format = DatasetPayloadFormat::Netcdf,
@@ -80,8 +77,7 @@ const std::vector<BuiltinDatasetSpec>& builtin_dataset_specs() {
             .description =
                 "Monthly mean near-surface meridional wind from the NCEP/NCAR Reanalysis.",
             .provider_key = "psl",
-            .default_base_url =
-                "https://downloads.psl.noaa.gov/Datasets/ncep.reanalysis.derived/surface",
+            .default_path = "Datasets/ncep.reanalysis.derived/surface",
             .filename_pattern = "vwnd.mon.mean.nc",
             .file_mode = FileMode::SingleFile,
             .payload_format = DatasetPayloadFormat::Netcdf,
@@ -94,8 +90,7 @@ const std::vector<BuiltinDatasetSpec>& builtin_dataset_specs() {
             .description =
                 "Monthly mean near-surface relative humidity from the NCEP/NCAR Reanalysis.",
             .provider_key = "psl",
-            .default_base_url =
-                "https://downloads.psl.noaa.gov/Datasets/ncep.reanalysis.derived/surface",
+            .default_path = "Datasets/ncep.reanalysis.derived/surface",
             .filename_pattern = "rhum.mon.mean.nc",
             .file_mode = FileMode::SingleFile,
             .payload_format = DatasetPayloadFormat::Netcdf,
@@ -108,8 +103,7 @@ const std::vector<BuiltinDatasetSpec>& builtin_dataset_specs() {
             .description =
                 "Monthly mean precipitable water from the NCEP/NCAR Reanalysis.",
             .provider_key = "psl",
-            .default_base_url =
-                "https://downloads.psl.noaa.gov/Datasets/ncep.reanalysis.derived/surface",
+            .default_path = "Datasets/ncep.reanalysis.derived/surface",
             .filename_pattern = "pr_wtr.mon.mean.nc",
             .file_mode = FileMode::SingleFile,
             .payload_format = DatasetPayloadFormat::Netcdf,
@@ -122,8 +116,7 @@ const std::vector<BuiltinDatasetSpec>& builtin_dataset_specs() {
             .description =
                 "Monthly mean geopotential height on pressure levels from the NCEP/DOE Reanalysis 2.",
             .provider_key = "psl",
-            .default_base_url =
-                "https://downloads.psl.noaa.gov/Datasets/ncep.reanalysis2.derived/pressure",
+            .default_path = "Datasets/ncep.reanalysis2.derived/pressure",
             .filename_pattern = "hgt.mon.mean.nc",
             .file_mode = FileMode::SingleFile,
             .payload_format = DatasetPayloadFormat::Netcdf,
@@ -136,8 +129,7 @@ const std::vector<BuiltinDatasetSpec>& builtin_dataset_specs() {
             .description =
                 "Monthly mean vertical velocity on pressure levels from the NCEP/DOE Reanalysis 2.",
             .provider_key = "psl",
-            .default_base_url =
-                "https://downloads.psl.noaa.gov/Datasets/ncep.reanalysis2.derived/pressure",
+            .default_path = "Datasets/ncep.reanalysis2.derived/pressure",
             .filename_pattern = "omega.mon.mean.nc",
             .file_mode = FileMode::SingleFile,
             .payload_format = DatasetPayloadFormat::Netcdf,
@@ -148,10 +140,21 @@ const std::vector<BuiltinDatasetSpec>& builtin_dataset_specs() {
     return specs;
 }
 
+std::map<std::string, std::string> builtin_provider_base_urls() {
+    return {
+        {"psl", "https://downloads.psl.noaa.gov"},
+    };
+}
+
 std::map<std::string, std::string> builtin_dataset_base_urls() {
+    const auto provider_base_urls = builtin_provider_base_urls();
     std::map<std::string, std::string> urls;
     for (const auto& spec : builtin_dataset_specs()) {
-        urls.emplace(std::string(spec.id), std::string(spec.default_base_url));
+        const auto provider_base_url = provider_base_urls.at(std::string(spec.provider_key));
+        urls.emplace(
+            std::string(spec.id),
+            provider_base_url + "/" + std::string(spec.default_path)
+        );
     }
     return urls;
 }

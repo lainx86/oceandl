@@ -19,6 +19,10 @@ std::filesystem::path default_output_dir() {
     return expand_user(std::filesystem::path("~/data/oceandl"));
 }
 
+std::map<std::string, std::string> default_provider_base_urls() {
+    return builtin_provider_base_urls();
+}
+
 std::map<std::string, std::string> default_dataset_base_urls() {
     return builtin_dataset_base_urls();
 }
@@ -27,7 +31,7 @@ AppConfig default_app_config() {
     AppConfig config;
     config.default_output_dir = default_output_dir();
     config.user_agent = fmt::format("oceandl/{}", kVersion);
-    config.dataset_base_urls = default_dataset_base_urls();
+    config.provider_base_urls = default_provider_base_urls();
     config.normalize_and_validate();
     return config;
 }
@@ -53,16 +57,21 @@ void AppConfig::normalize_and_validate() {
         user_agent = fmt::format("oceandl/{}", kVersion);
     }
 
-    std::map<std::string, std::string> normalized_urls;
-    for (const auto& [key, value] : dataset_base_urls) {
-        const auto normalized_key = to_lower(trim(key));
-        const auto normalized_value = trim_trailing_slash(value);
-        if (normalized_key.empty() || normalized_value.empty()) {
-            throw std::invalid_argument("dataset_base_urls tidak boleh berisi key/url kosong.");
+    auto normalize_url_map = [](const std::map<std::string, std::string>& source, const char* field_name) {
+        std::map<std::string, std::string> normalized;
+        for (const auto& [key, value] : source) {
+            const auto normalized_key = to_lower(trim(key));
+            const auto normalized_value = trim_trailing_slash(value);
+            if (normalized_key.empty() || normalized_value.empty()) {
+                throw std::invalid_argument(std::string(field_name) + " tidak boleh berisi key/url kosong.");
+            }
+            normalized[normalized_key] = normalized_value;
         }
-        normalized_urls[normalized_key] = normalized_value;
-    }
-    dataset_base_urls = std::move(normalized_urls);
+        return normalized;
+    };
+
+    provider_base_urls = normalize_url_map(provider_base_urls, "provider_base_urls");
+    dataset_base_urls = normalize_url_map(dataset_base_urls, "dataset_base_urls");
 }
 
 AppConfig load_config(const std::filesystem::path& path) {
@@ -99,6 +108,14 @@ AppConfig load_config(const std::filesystem::path& path) {
         }
         if (const auto value = table["user_agent"].value<std::string>()) {
             config.user_agent = *value;
+        }
+
+        if (const auto* provider_base_urls = table["provider_base_urls"].as_table()) {
+            for (const auto& [key, node] : *provider_base_urls) {
+                if (const auto value = node.value<std::string>()) {
+                    config.provider_base_urls[to_lower(trim(key.str()))] = *value;
+                }
+            }
         }
 
         if (const auto* dataset_base_urls = table["dataset_base_urls"].as_table()) {

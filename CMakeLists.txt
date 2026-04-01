@@ -17,6 +17,7 @@ add_library(oceandl_lib
     cpp/src/cli_support.cpp
     cpp/src/config.cpp
     cpp/src/download_lock.cpp
+    cpp/src/download_command.cpp
     cpp/src/download_resume.cpp
     cpp/src/downloader.cpp
     cpp/src/http_client.cpp
@@ -25,6 +26,7 @@ add_library(oceandl_lib
     cpp/src/providers/psl.cpp
     cpp/src/providers/registry.cpp
     cpp/src/reporter.cpp
+    cpp/src/target_download_executor.cpp
     cpp/src/utils.cpp
     cpp/src/validation.cpp
 )

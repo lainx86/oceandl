@@ -29,6 +29,7 @@
 #include "oceandl/utils.hpp"
 #include "oceandl/validation.hpp"
 #include "oceandl/version.hpp"
+#include "../src/download_command.hpp"
 
 using namespace oceandl;
 
@@ -311,6 +312,66 @@ bool test_download_request_validation() {
         };
         invalid.normalize_and_validate();
         return expect(false, "reversed year range should fail");
+    } catch (const std::exception&) {
+        return true;
+    }
+}
+
+bool test_download_command_parses_flags() {
+    const auto options = parse_download_options(
+        {
+            "oisst",
+            "--start-year",
+            "2024",
+            "--end-year",
+            "2025",
+            "--output-dir",
+            "data/out",
+            "--overwrite",
+            "--no-resume",
+            "--timeout",
+            "90",
+            "--chunk-size",
+            "4096",
+            "--retries",
+            "5",
+        }
+    );
+
+    return expect(options.dataset_argument == std::optional<std::string>("oisst"), "download parser positional dataset")
+        && expect(options.start_year == std::optional<int>(2024), "download parser start year")
+        && expect(options.end_year == std::optional<int>(2025), "download parser end year")
+        && expect(options.output_dir == std::optional<std::filesystem::path>("data/out"), "download parser output dir")
+        && expect(options.overwrite == std::optional<bool>(true), "download parser overwrite")
+        && expect(options.resume == std::optional<bool>(false), "download parser resume")
+        && expect(options.timeout == std::optional<double>(90.0), "download parser timeout")
+        && expect(options.chunk_size == std::optional<std::uint64_t>(4096), "download parser chunk size")
+        && expect(options.retries == std::optional<int>(5), "download parser retries");
+}
+
+bool test_download_command_resolves_dataset_from_option_or_config() {
+    const auto config = default_app_config();
+
+    const auto from_option = resolve_dataset_name(
+        DownloadCommandOptions{.dataset_option = std::string("GPCP")},
+        config
+    );
+    const auto from_config = resolve_dataset_name(DownloadCommandOptions{}, config);
+
+    return expect(from_option == "gpcp", "download command resolves --dataset")
+        && expect(from_config == config.default_dataset, "download command falls back to config default");
+}
+
+bool test_download_command_rejects_conflicting_dataset_values() {
+    try {
+        (void)resolve_dataset_name(
+            DownloadCommandOptions{
+                .dataset_argument = std::string("oisst"),
+                .dataset_option = std::string("gpcp"),
+            },
+            default_app_config()
+        );
+        return expect(false, "conflicting dataset values should fail");
     } catch (const std::exception&) {
         return true;
     }
@@ -996,6 +1057,8 @@ bool test_config_load_merges_dataset_urls() {
     config
         << "default_dataset = \"gpcp\"\n"
         << "timeout = 90\n"
+        << "[provider_base_urls]\n"
+        << "psl = \"https://mirror.example.test/\"\n"
         << "[dataset_base_urls]\n"
         << "gpcp = \"https://example.test/gpcp/\"\n";
     config.close();
@@ -1004,10 +1067,44 @@ bool test_config_load_merges_dataset_urls() {
     return expect(loaded.default_dataset == "gpcp", "loaded config dataset")
         && expect(loaded.timeout == 90.0, "loaded config timeout")
         && expect(
+            loaded.provider_base_urls.at("psl") == "https://mirror.example.test",
+            "loaded provider base url trims slash"
+        )
+        && expect(
             loaded.dataset_base_urls.at("gpcp") == "https://example.test/gpcp",
             "loaded config trims slash"
         )
-        && expect(loaded.dataset_base_urls.contains("oisst"), "default url merge");
+        && expect(loaded.provider_base_urls.contains("psl"), "default provider url merge");
+}
+
+bool test_catalog_builds_dataset_urls_from_provider_base_url() {
+    auto config = default_app_config();
+    config.provider_base_urls["psl"] = "https://mirror.example.test/";
+    config.normalize_and_validate();
+
+    const auto registry = build_default_dataset_registry(config);
+    return expect(
+               registry.get("gpcp").base_url == "https://mirror.example.test/Datasets/gpcp",
+               "catalog builds gpcp url from provider base url"
+           )
+        && expect(
+            registry.get("oisst").base_url
+                == "https://mirror.example.test/Datasets/noaa.oisst.v2.highres",
+            "catalog builds oisst url from provider base url"
+        );
+}
+
+bool test_catalog_prefers_legacy_dataset_url_override() {
+    auto config = default_app_config();
+    config.provider_base_urls["psl"] = "https://mirror.example.test";
+    config.dataset_base_urls["gpcp"] = "https://legacy.example.test/custom-gpcp/";
+    config.normalize_and_validate();
+
+    const auto registry = build_default_dataset_registry(config);
+    return expect(
+        registry.get("gpcp").base_url == "https://legacy.example.test/custom-gpcp",
+        "legacy dataset-specific override still wins"
+    );
 }
 
 bool test_version_constant_present() {
@@ -1155,6 +1252,9 @@ int main() {
     const std::vector<std::pair<std::string, std::function<bool()>>> tests = {
         {"registry_contains_expected_datasets", test_registry_contains_expected_datasets},
         {"download_request_validation", test_download_request_validation},
+        {"download_command_parses_flags", test_download_command_parses_flags},
+        {"download_command_resolves_dataset", test_download_command_resolves_dataset_from_option_or_config},
+        {"download_command_rejects_conflict", test_download_command_rejects_conflicting_dataset_values},
         {"psl_provider_targets", test_psl_provider_targets},
         {"download_target_layout_is_centralized", test_download_target_layout_is_centralized},
         {"validation_accepts_minimal_netcdf", test_validation_accepts_minimal_netcdf},
@@ -1173,6 +1273,8 @@ int main() {
         {"downloader_continues_when_head_metadata_is_blocked", test_downloader_continues_when_head_metadata_is_blocked},
         {"downloader_propagates_chunk_size_to_http_client", test_downloader_propagates_chunk_size_to_http_client},
         {"config_load_merges_dataset_urls", test_config_load_merges_dataset_urls},
+        {"catalog_builds_dataset_urls_from_provider_base_url", test_catalog_builds_dataset_urls_from_provider_base_url},
+        {"catalog_prefers_legacy_dataset_url_override", test_catalog_prefers_legacy_dataset_url_override},
         {"version_constant_present", test_version_constant_present},
         {"reporter_structures_plain_output_without_color", test_reporter_structures_plain_output_without_color},
         {"cli_shows_global_help_for_help_flag", test_cli_shows_global_help_for_help_flag},

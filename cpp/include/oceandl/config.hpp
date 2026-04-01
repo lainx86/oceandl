@@ -16,6 +16,7 @@ struct AppConfig {
     bool overwrite = false;
     bool resume = true;
     std::string user_agent;
+    std::map<std::string, std::string> provider_base_urls;
     std::map<std::string, std::string> dataset_base_urls;
 
     void normalize_and_validate();
@@ -23,6 +24,7 @@ struct AppConfig {
 
 std::filesystem::path default_config_path();
 std::filesystem::path default_output_dir();
+std::map<std::string, std::string> default_provider_base_urls();
 std::map<std::string, std::string> default_dataset_base_urls();
 AppConfig default_app_config();
 AppConfig load_config(const std::filesystem::path& path);

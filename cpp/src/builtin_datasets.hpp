@@ -14,7 +14,7 @@ struct BuiltinDatasetSpec {
     std::string_view display_name;
     std::string_view description;
     std::string_view provider_key;
-    std::string_view default_base_url;
+    std::string_view default_path;
     std::string_view filename_pattern;
     FileMode file_mode = FileMode::PerYear;
     DatasetPayloadFormat payload_format = DatasetPayloadFormat::Netcdf;
@@ -23,6 +23,7 @@ struct BuiltinDatasetSpec {
 };
 
 const std::vector<BuiltinDatasetSpec>& builtin_dataset_specs();
+std::map<std::string, std::string> builtin_provider_base_urls();
 std::map<std::string, std::string> builtin_dataset_base_urls();
 
 }  // namespace oceandl

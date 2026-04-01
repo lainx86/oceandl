@@ -7,6 +7,46 @@
 
 namespace oceandl {
 
+namespace {
+
+std::string trim_leading_slash(std::string_view value) {
+    std::string result = trim(value);
+    while (!result.empty() && result.front() == '/') {
+        result.erase(result.begin());
+    }
+    return result;
+}
+
+std::string compose_provider_dataset_url(
+    const std::string& provider_base_url,
+    std::string_view dataset_path
+) {
+    return trim_trailing_slash(provider_base_url) + "/" + trim_leading_slash(dataset_path);
+}
+
+std::string resolve_dataset_base_url(
+    const AppConfig& config,
+    const BuiltinDatasetSpec& spec
+) {
+    const auto dataset_id = std::string(spec.id);
+    if (const auto dataset_iterator = config.dataset_base_urls.find(dataset_id);
+        dataset_iterator != config.dataset_base_urls.end()) {
+        return dataset_iterator->second;
+    }
+
+    const auto provider_key = std::string(spec.provider_key);
+    if (const auto provider_iterator = config.provider_base_urls.find(provider_key);
+        provider_iterator != config.provider_base_urls.end()) {
+        return compose_provider_dataset_url(provider_iterator->second, spec.default_path);
+    }
+
+    throw std::invalid_argument(
+        "provider_base_urls belum punya entry untuk provider '" + provider_key + "'."
+    );
+}
+
+}  // namespace
+
 DatasetRegistry::DatasetRegistry(std::vector<DatasetInfo> datasets, std::string default_dataset)
     : default_dataset_(to_lower(trim(default_dataset))) {
     for (auto& dataset : datasets) {
@@ -66,7 +106,7 @@ DatasetRegistry build_default_dataset_registry(const AppConfig& config) {
                 .display_name = std::string(spec.display_name),
                 .description = std::string(spec.description),
                 .provider_key = std::string(spec.provider_key),
-                .base_url = config.dataset_base_urls.at(std::string(spec.id)),
+                .base_url = resolve_dataset_base_url(config, spec),
                 .filename_pattern = std::string(spec.filename_pattern),
                 .file_mode = spec.file_mode,
                 .payload_format = spec.payload_format,
