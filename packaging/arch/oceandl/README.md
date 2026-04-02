@@ -15,9 +15,8 @@ The package builds from the formal source release asset:
 - asset URL: `https://github.com/lainx86/oceandl/releases/download/vX.Y.Z/oceandl-src-vX.Y.Z.tar.gz`
 - checksum source: the matching line in `SHA256SUMS`
 
-Until the first tagged release for a given version exists, the checked-in `PKGBUILD` keeps its
-default checksum as `SKIP`. The maintainer is expected to replace it with the published SHA-256
-immediately after the release workflow uploads the matching source asset.
+The checked-in `PKGBUILD` pins the expected SHA-256 for the current release candidate.
+After each new tag, update that checksum from the published `SHA256SUMS`.
 
 ## Update process
 
