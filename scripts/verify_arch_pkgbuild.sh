@@ -1,0 +1,46 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+if [ "$#" -ne 2 ]; then
+  echo "usage: $0 <source-release.tar.gz> <pkgbuild-dir>" >&2
+  exit 2
+fi
+
+archive_path=$(realpath "$1")
+pkgbuild_dir=$(realpath "$2")
+archive_sha256=$(sha256sum "$archive_path" | awk '{print $1}')
+
+work_dir=$(mktemp -d)
+cleanup() {
+  rm -rf "$work_dir"
+}
+trap cleanup EXIT
+
+cp -a "$pkgbuild_dir"/. "$work_dir/pkgbuild"
+
+pushd "$work_dir/pkgbuild" >/dev/null
+OCEANDL_SOURCE_URL="file://${archive_path}" \
+OCEANDL_SOURCE_SHA256="$archive_sha256" \
+makepkg --force --nodeps --cleanbuild
+package_path=$(find . -maxdepth 1 -type f -name '*.pkg.tar*' | head -n 1)
+if [ -z "$package_path" ]; then
+  echo "makepkg did not produce a package archive" >&2
+  exit 1
+fi
+popd >/dev/null
+
+extract_root="$work_dir/extract"
+mkdir -p "$extract_root"
+bsdtar -xf "$work_dir/pkgbuild/$package_path" -C "$extract_root"
+
+binary_path="$extract_root/usr/bin/oceandl"
+if [ ! -x "$binary_path" ]; then
+  echo "expected packaged binary not found at $binary_path" >&2
+  exit 1
+fi
+
+"$binary_path" --version
+"$binary_path" datasets >/dev/null
+"$binary_path" providers >/dev/null
+"$binary_path" download --help >/dev/null

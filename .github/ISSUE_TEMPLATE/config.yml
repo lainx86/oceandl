@@ -1,5 +1,5 @@
 blank_issues_enabled: false
 contact_links:
   - name: Security vulnerability report
-    url: mailto:security@oceandl.dev
-    about: Do not report vulnerabilities in public issues.
+    url: mailto:febysyarief.dev@gmail.com?subject=%5Boceandl%20security%5D%20Vulnerability%20report
+    about: Report suspected vulnerabilities privately to the maintainer. Do not open public issues.

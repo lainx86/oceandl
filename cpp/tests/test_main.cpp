@@ -243,6 +243,20 @@ DownloadRequest fixture_request(const std::filesystem::path& output_dir) {
     return request;
 }
 
+RemoteFileMetadata fixture_remote_metadata(
+    std::optional<std::uint64_t> content_length = std::nullopt,
+    std::optional<bool> accepts_ranges = std::nullopt,
+    std::optional<std::string> etag = std::nullopt,
+    std::optional<std::string> last_modified = std::nullopt
+) {
+    return RemoteFileMetadata{
+        .content_length = content_length,
+        .accepts_ranges = accepts_ranges,
+        .etag = std::move(etag),
+        .last_modified = std::move(last_modified),
+    };
+}
+
 bool expect(bool condition, const std::string& message) {
     if (!condition) {
         std::cerr << "FAILED: " << message << '\n';
@@ -296,11 +310,48 @@ std::string request_header_value(const HttpRequest& request, const std::string& 
 }
 
 bool path_has_lock_artifact(const std::filesystem::path& path) {
-#ifdef _WIN32
-    return std::filesystem::is_directory(path);
-#else
-    return std::filesystem::is_regular_file(path);
-#endif
+    return std::filesystem::exists(path);
+}
+
+bool test_downloader_cleans_up_lock_artifact_after_successful_download() {
+    TempDir temp_dir;
+    auto dataset = fixture_dataset();
+    auto request = fixture_request(temp_dir.path());
+    const auto payload = valid_netcdf_bytes();
+
+    int get_calls = 0;
+    FakeHttpClient client;
+    client.on_head = [&](const HttpRequest&) { return HttpResponse{}; };
+    client.on_get = [&](const HttpRequest&, ResponseHandler& handler) {
+        ++get_calls;
+        handler.on_response_start(
+            HttpResponse{
+                .status_code = 200,
+                .headers = {{"content-length", std::to_string(payload.size())}},
+                .bytes_transferred = 0,
+            }
+        );
+        handler.on_chunk(std::string_view(payload.data(), payload.size()));
+        return HttpResponse{
+            .status_code = 200,
+            .headers = {{"content-length", std::to_string(payload.size())}},
+            .bytes_transferred = payload.size(),
+        };
+    };
+
+    std::ostringstream out;
+    std::ostringstream err;
+    Reporter reporter(out, err, Verbosity::Quiet);
+    Downloader downloader(client, reporter);
+    FixtureProvider provider(fixture_remote_metadata(payload.size(), true));
+
+    const auto summary = downloader.download(request, dataset, provider);
+    const auto final_path = temp_dir.path() / dataset.id / "fixture.nc";
+    const auto lock_path = temp_dir.path() / dataset.id / "fixture.nc.lock";
+    return expect(summary.downloaded_count() == 1, "summary downloaded count after success")
+        && expect(get_calls == 1, "get called once for successful download")
+        && expect(std::filesystem::exists(final_path), "output exists after successful download")
+        && expect(!path_has_lock_artifact(lock_path), "lock artifact removed after successful download");
 }
 
 bool test_registry_contains_expected_datasets() {
@@ -406,10 +457,10 @@ bool test_download_command_parses_flags() {
 bool test_download_command_resolves_dataset_from_option_or_config() {
     const auto config = default_app_config();
 
-    const auto from_option = resolve_dataset_name(
-        DownloadCommandOptions{.dataset_option = std::string("GPCP")},
-        config
-    );
+    DownloadCommandOptions from_option_options;
+    from_option_options.dataset_option = std::string("GPCP");
+
+    const auto from_option = resolve_dataset_name(from_option_options, config);
     const auto from_config = resolve_dataset_name(DownloadCommandOptions{}, config);
 
     return expect(from_option == "gpcp", "download command resolves --dataset")
@@ -418,11 +469,12 @@ bool test_download_command_resolves_dataset_from_option_or_config() {
 
 bool test_download_command_rejects_conflicting_dataset_values() {
     try {
+        DownloadCommandOptions options;
+        options.dataset_argument = std::string("oisst");
+        options.dataset_option = std::string("gpcp");
+
         (void)resolve_dataset_name(
-            DownloadCommandOptions{
-                .dataset_argument = std::string("oisst"),
-                .dataset_option = std::string("gpcp"),
-            },
+            options,
             default_app_config()
         );
         return expect(false, "conflicting dataset values should fail");
@@ -547,13 +599,13 @@ bool test_downloader_skips_existing_valid_file() {
     std::ostringstream err;
     Reporter reporter(out, err, Verbosity::Quiet);
     Downloader downloader(client, reporter);
-    FixtureProvider provider({.content_length = payload.size(), .accepts_ranges = true});
+    FixtureProvider provider(fixture_remote_metadata(payload.size(), true));
 
     const auto summary = downloader.download(request, dataset, provider);
     const auto lock_path = temp_dir.path() / dataset.id / "fixture.nc.lock";
     return expect(summary.skipped_count() == 1, "summary skipped count")
         && expect(get_calls == 0, "skip avoids get")
-        && expect(path_has_lock_artifact(lock_path), "lock artifact persists after skip");
+        && expect(!path_has_lock_artifact(lock_path), "lock artifact removed after skip");
 }
 
 bool test_downloader_redownloads_existing_file_when_remote_size_unknown() {
@@ -598,7 +650,7 @@ bool test_downloader_redownloads_existing_file_when_remote_size_unknown() {
     std::ostringstream err;
     Reporter reporter(out, err, Verbosity::Quiet);
     Downloader downloader(client, reporter);
-    FixtureProvider provider({.content_length = std::nullopt, .accepts_ranges = true, .etag = "\"fixture-v1\""});
+    FixtureProvider provider(fixture_remote_metadata(std::nullopt, true, "\"fixture-v1\""));
 
     const auto summary = downloader.download(request, dataset, provider);
     return expect(summary.downloaded_count() == 1, "downloaded when remote size unknown")
@@ -636,7 +688,7 @@ bool test_downloader_rejects_partial_on_416_without_remote_size() {
     std::ostringstream err;
     Reporter reporter(out, err, Verbosity::Quiet);
     Downloader downloader(client, reporter);
-    FixtureProvider provider({.content_length = std::nullopt, .accepts_ranges = true, .etag = "\"fixture-v1\""});
+    FixtureProvider provider(fixture_remote_metadata(std::nullopt, true, "\"fixture-v1\""));
 
     const auto summary = downloader.download(request, dataset, provider);
     const auto final_path = temp_dir.path() / dataset.id / "fixture.nc";
@@ -686,7 +738,7 @@ bool test_downloader_discards_partial_when_ranges_unavailable() {
     std::ostringstream err;
     Reporter reporter(out, err, Verbosity::Quiet);
     Downloader downloader(client, reporter);
-    FixtureProvider provider({.content_length = payload.size(), .accepts_ranges = false});
+    FixtureProvider provider(fixture_remote_metadata(payload.size(), false));
 
     const auto summary = downloader.download(request, dataset, provider);
     const auto final_path = temp_dir.path() / dataset.id / "fixture.nc";
@@ -745,9 +797,7 @@ bool test_downloader_discards_partial_when_etag_changes() {
     std::ostringstream err;
     Reporter reporter(out, err, Verbosity::Quiet);
     Downloader downloader(client, reporter);
-    FixtureProvider provider(
-        {.content_length = payload.size(), .accepts_ranges = true, .etag = "\"new-etag\""}
-    );
+    FixtureProvider provider(fixture_remote_metadata(payload.size(), true, "\"new-etag\""));
 
     const auto summary = downloader.download(request, dataset, provider);
     const auto final_path = temp_dir.path() / dataset.id / "fixture.nc";
@@ -813,9 +863,7 @@ bool test_downloader_sends_if_range_when_resuming() {
     std::ostringstream err;
     Reporter reporter(out, err, Verbosity::Quiet);
     Downloader downloader(client, reporter);
-    FixtureProvider provider(
-        {.content_length = payload.size(), .accepts_ranges = true, .etag = "\"fixture-v1\""}
-    );
+    FixtureProvider provider(fixture_remote_metadata(payload.size(), true, "\"fixture-v1\""));
 
     const auto summary = downloader.download(request, dataset, provider);
     const auto final_path = temp_dir.path() / dataset.id / "fixture.nc";
@@ -825,7 +873,7 @@ bool test_downloader_sends_if_range_when_resuming() {
         && expect(std::filesystem::exists(final_path), "output exists after resume")
         && expect(!std::filesystem::exists(part_path), "part removed after resume")
         && expect(!std::filesystem::exists(meta_path), "part metadata removed after resume")
-        && expect(path_has_lock_artifact(lock_path), "lock artifact persists after resume")
+        && expect(!path_has_lock_artifact(lock_path), "lock artifact removed after resume")
         && expect(request_has_header_prefix(last_get_request, "Range: bytes=16-"), "range header sent")
         && expect(
             request_header_value(last_get_request, "If-Range: ") == "\"fixture-v1\"",
@@ -857,7 +905,7 @@ bool test_downloader_fails_when_target_is_locked() {
     std::ostringstream err;
     Reporter reporter(out, err, Verbosity::Quiet);
     Downloader downloader(client, reporter);
-    FixtureProvider provider({.content_length = 32, .accepts_ranges = true});
+    FixtureProvider provider(fixture_remote_metadata(32, true));
 
     const auto summary = downloader.download(request, dataset, provider);
     return expect(summary.failed_count() == 1, "summary failed count when target locked")
@@ -904,15 +952,68 @@ bool test_downloader_recovers_legacy_lock_directory_without_peer_process() {
     std::ostringstream err;
     Reporter reporter(out, err, Verbosity::Quiet);
     Downloader downloader(client, reporter);
-    FixtureProvider provider({.content_length = payload.size(), .accepts_ranges = true});
+    FixtureProvider provider(fixture_remote_metadata(payload.size(), true));
 
     const auto summary = downloader.download(request, dataset, provider);
     const auto final_path = temp_dir.path() / dataset.id / "fixture.nc";
     return expect(summary.downloaded_count() == 1, "legacy lock without peer recovered")
         && expect(get_calls == 1, "get called after legacy lock cleanup")
         && expect(std::filesystem::exists(final_path), "output exists after legacy lock cleanup")
-        && expect(path_has_lock_artifact(lock_path), "legacy lock replaced by lock artifact");
+        && expect(!path_has_lock_artifact(lock_path), "lock artifact removed after legacy lock cleanup");
 }
+
+#ifndef _WIN32
+bool test_downloader_recovers_legacy_lock_file_without_peer_process() {
+    TempDir temp_dir;
+    auto dataset = fixture_dataset();
+    auto request = fixture_request(temp_dir.path());
+
+    const auto lock_path = temp_dir.path() / dataset.id / "fixture.nc.lock";
+    std::filesystem::create_directories(lock_path.parent_path());
+    {
+        std::ofstream lock_file(lock_path, std::ios::binary | std::ios::trunc);
+        lock_file << "pid 999999\n";
+    }
+
+    const auto payload = valid_netcdf_bytes();
+    int get_calls = 0;
+    FakeHttpClient client;
+    client.on_head = [&](const HttpRequest&) { return HttpResponse{}; };
+    client.on_get = [&](const HttpRequest&, ResponseHandler& handler) {
+        ++get_calls;
+        handler.on_response_start(
+            HttpResponse{
+                .status_code = 200,
+                .headers = {
+                    {"content-length", std::to_string(payload.size())},
+                },
+                .bytes_transferred = 0,
+            }
+        );
+        handler.on_chunk(std::string_view(payload.data(), payload.size()));
+        return HttpResponse{
+            .status_code = 200,
+            .headers = {
+                {"content-length", std::to_string(payload.size())},
+            },
+            .bytes_transferred = payload.size(),
+        };
+    };
+
+    std::ostringstream out;
+    std::ostringstream err;
+    Reporter reporter(out, err, Verbosity::Quiet);
+    Downloader downloader(client, reporter);
+    FixtureProvider provider(fixture_remote_metadata(payload.size(), true));
+
+    const auto summary = downloader.download(request, dataset, provider);
+    const auto final_path = temp_dir.path() / dataset.id / "fixture.nc";
+    return expect(summary.downloaded_count() == 1, "legacy lock file without peer recovered")
+        && expect(get_calls == 1, "get called after legacy lock file cleanup")
+        && expect(std::filesystem::exists(final_path), "output exists after legacy lock file cleanup")
+        && expect(!path_has_lock_artifact(lock_path), "legacy lock file removed after recovery");
+}
+#endif
 
 bool test_safe_replace_file_restores_existing_output_on_failure() {
     TempDir temp_dir;
@@ -980,7 +1081,7 @@ bool test_downloader_retries_transient_network_error() {
     std::ostringstream err;
     Reporter reporter(out, err, Verbosity::Quiet);
     Downloader downloader(client, reporter);
-    FixtureProvider provider({.content_length = payload.size(), .accepts_ranges = true});
+    FixtureProvider provider(fixture_remote_metadata(payload.size(), true));
 
     const auto summary = downloader.download(request, dataset, provider);
     return expect(summary.downloaded_count() == 1, "transient network error eventually succeeds")
@@ -1064,9 +1165,7 @@ bool test_downloader_retries_http_503_without_corrupting_partial() {
     std::ostringstream err;
     Reporter reporter(out, err, Verbosity::Quiet);
     Downloader downloader(client, reporter);
-    FixtureProvider provider(
-        {.content_length = payload.size(), .accepts_ranges = true, .etag = "\"fixture-v1\""}
-    );
+    FixtureProvider provider(fixture_remote_metadata(payload.size(), true, "\"fixture-v1\""));
 
     const auto summary = downloader.download(request, dataset, provider);
     const auto final_path = temp_dir.path() / dataset.id / "fixture.nc";
@@ -1117,7 +1216,7 @@ bool test_downloader_rejects_download_without_verifiable_size() {
     std::ostringstream err;
     Reporter reporter(out, err, Verbosity::Quiet);
     Downloader downloader(client, reporter);
-    FixtureProvider provider({.content_length = std::nullopt, .accepts_ranges = true, .etag = "\"fixture-v1\""});
+    FixtureProvider provider(fixture_remote_metadata(std::nullopt, true, "\"fixture-v1\""));
 
     const auto summary = downloader.download(request, dataset, provider);
     const auto output_path = temp_dir.path() / dataset.id / "fixture.nc";
@@ -1156,7 +1255,7 @@ bool test_downloader_does_not_retry_permanent_network_error() {
     std::ostringstream err;
     Reporter reporter(out, err, Verbosity::Quiet);
     Downloader downloader(client, reporter);
-    FixtureProvider provider({.content_length = 32, .accepts_ranges = true});
+    FixtureProvider provider(fixture_remote_metadata(32, true));
 
     const auto summary = downloader.download(request, dataset, provider);
     return expect(summary.failed_count() == 1, "permanent network error fails")
@@ -1305,7 +1404,7 @@ bool test_downloader_propagates_chunk_size_to_http_client() {
     std::ostringstream err;
     Reporter reporter(out, err, Verbosity::Quiet);
     Downloader downloader(client, reporter);
-    FixtureProvider provider({.content_length = payload.size(), .accepts_ranges = true});
+    FixtureProvider provider(fixture_remote_metadata(payload.size(), true));
 
     const auto summary = downloader.download(request, dataset, provider);
     return expect(summary.downloaded_count() == 1, "download succeeds with custom chunk size")
@@ -1669,6 +1768,7 @@ int main() {
         {"validation_accepts_minimal_netcdf", test_validation_accepts_minimal_netcdf},
         {"validation_rejects_invalid_netcdf_version_byte", test_validation_rejects_invalid_netcdf_version_byte},
         {"dataset_validation_uses_dataset_metadata", test_dataset_validation_uses_dataset_metadata},
+        {"downloader_cleans_up_lock_artifact_after_successful_download", test_downloader_cleans_up_lock_artifact_after_successful_download},
         {"downloader_skips_existing_valid_file", test_downloader_skips_existing_valid_file},
         {"downloader_redownloads_existing_file_when_remote_size_unknown", test_downloader_redownloads_existing_file_when_remote_size_unknown},
         {"downloader_rejects_partial_on_416_without_remote_size", test_downloader_rejects_partial_on_416_without_remote_size},
@@ -1677,6 +1777,9 @@ int main() {
         {"downloader_sends_if_range_when_resuming", test_downloader_sends_if_range_when_resuming},
         {"downloader_fails_when_target_is_locked", test_downloader_fails_when_target_is_locked},
         {"downloader_recovers_legacy_lock_directory_without_peer_process", test_downloader_recovers_legacy_lock_directory_without_peer_process},
+#ifndef _WIN32
+        {"downloader_recovers_legacy_lock_file_without_peer_process", test_downloader_recovers_legacy_lock_file_without_peer_process},
+#endif
         {"safe_replace_file_restores_existing_output_on_failure", test_safe_replace_file_restores_existing_output_on_failure},
         {"downloader_retries_transient_network_error", test_downloader_retries_transient_network_error},
         {"downloader_retries_http_503_without_corrupting_partial", test_downloader_retries_http_503_without_corrupting_partial},

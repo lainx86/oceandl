@@ -1,5 +1,15 @@
 # Releasing oceandl
 
+## Public release positioning
+
+Keep public messaging aligned with the current project state:
+
+- releases are still alpha,
+- the primary supported path is still source build on the CI-covered platforms,
+- GitHub Release archives are convenience artifacts for evaluation and early adopters, not a claim that `oceandl` is already a stable binary-first product,
+- broad package-manager distribution is not published yet and should not be implied in release notes,
+- the first maintainer-owned package-manager target is the Arch `makepkg` package spec in `packaging/arch/oceandl/`.
+
 ## Versioning policy
 
 - Follow Semantic Versioning.
@@ -9,16 +19,40 @@
 ## Release checklist
 
 1. Ensure `main` is green in CI (Linux/macOS/Windows).
-2. Run local smoke checks:
+2. Ensure the support matrix and bootstrap commands in `README.md` still match the current CI/toolchain reality.
+3. Ensure the release notes and README language still describe the release as alpha/source-first unless that policy has intentionally changed.
+4. Run local smoke checks from the build tree:
    - `oceandl --version`
    - `oceandl datasets`
    - `oceandl providers`
    - `oceandl download --help`
-3. Update:
+5. Update:
    - `CHANGELOG.md`
    - `README.md` (if user-facing behavior changed)
-4. Create a version tag:
+6. Create a version tag:
    - `git tag vX.Y.Z`
    - `git push origin vX.Y.Z`
-5. Verify `Release` workflow uploaded all platform artifacts.
-6. Publish release notes from changelog entries.
+7. Verify the `Release` workflow packages an install tree per platform:
+   - `bin/` contains `oceandl`/`oceandl.exe`
+   - non-system runtime libraries are bundled next to the executable on Linux/Windows
+   - non-system runtime libraries are bundled in `Frameworks/` on macOS
+8. Verify the publish job also creates the formal source archive `oceandl-src-vX.Y.Z.tar.gz`.
+9. Verify the workflow re-downloads the final platform archives, extracts them, and smoke-tests the extracted binaries on each platform runner.
+10. Verify the publish job generates and uploads `SHA256SUMS`.
+11. Verify each uploaded archive can be checked with the published SHA-256 values.
+12. Update `packaging/arch/oceandl/PKGBUILD` with the new `pkgver` and the SHA-256 for `oceandl-src-vX.Y.Z.tar.gz`.
+13. Regenerate `packaging/arch/oceandl/.SRCINFO`:
+    - `cd packaging/arch/oceandl`
+    - `makepkg --printsrcinfo > .SRCINFO`
+14. Verify the package-manager install path locally before publishing the package spec externally:
+    - `./scripts/create_source_release.sh X.Y.Z dist/oceandl-src-vX.Y.Z.tar.gz`
+    - `./scripts/verify_arch_pkgbuild.sh dist/oceandl-src-vX.Y.Z.tar.gz packaging/arch/oceandl`
+15. Publish release notes from changelog entries, keeping the alpha/source-first framing explicit.
+
+## Artifact integrity
+
+- Public releases publish a `SHA256SUMS` file for all archived assets.
+- Public releases also publish the formal source archive `oceandl-src-vX.Y.Z.tar.gz` for package-manager consumers.
+- Detached signatures are intentionally **not** published yet.
+- Signature support is deferred until maintainer-managed signing keys, storage, and rotation policy are in place.
+- When signing keys are ready, add detached signatures for `SHA256SUMS` or for each release asset as a follow-up.

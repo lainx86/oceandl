@@ -1,0 +1,101 @@
+include(BundleUtilities)
+
+set(BU_CHMOD_BUNDLE_ITEMS TRUE)
+
+function(gp_resolved_file_type_override resolved_file type_var)
+    set(_type "${${type_var}}")
+    if(NOT resolved_file)
+        set(${type_var} "${_type}" PARENT_SCOPE)
+        return()
+    endif()
+
+    get_filename_component(_name "${resolved_file}" NAME)
+
+    if(WIN32)
+        string(REPLACE "\\" "/" _normalized "${resolved_file}")
+        string(TOLOWER "${_normalized}" _lower)
+        if(
+            _name MATCHES "^(api-ms-win-|ext-ms-win-)"
+            OR _lower MATCHES "/windows/system32/"
+        )
+            set(_type "system")
+        else()
+            set(_type "local")
+        endif()
+    elseif(APPLE)
+        if(
+            resolved_file MATCHES "^/System/Library/"
+            OR resolved_file MATCHES "^/usr/lib/"
+        )
+            set(_type "system")
+        else()
+            set(_type "local")
+        endif()
+    else()
+        if(
+            _name MATCHES
+            "^(linux-vdso\\.so.*|ld-linux[^/]*\\.so[^/]*|ld64\\.so[^/]*|ld-musl-[^/]+\\.so[^/]*|libc\\.so[^/]*|libm\\.so[^/]*|libpthread\\.so[^/]*|librt\\.so[^/]*|libdl\\.so[^/]*|libutil\\.so[^/]*|libresolv\\.so[^/]*|libnsl\\.so[^/]*|libanl\\.so[^/]*|libBrokenLocale\\.so[^/]*)$"
+        )
+            set(_type "system")
+        else()
+            set(_type "local")
+        endif()
+    endif()
+
+    set(${type_var} "${_type}" PARENT_SCOPE)
+endfunction()
+
+get_filename_component(_install_prefix "${CMAKE_INSTALL_PREFIX}" ABSOLUTE)
+set(_app "${_install_prefix}/@CMAKE_INSTALL_BINDIR@/oceandl@CMAKE_EXECUTABLE_SUFFIX@")
+if(NOT EXISTS "${_app}")
+    message(FATAL_ERROR "Release bundle install step expected executable at '${_app}'.")
+endif()
+
+set(_bundle_search_dirs
+    "@CMAKE_BINARY_DIR@"
+    "@CMAKE_BINARY_DIR@/@CMAKE_INSTALL_BINDIR@"
+    "@CMAKE_BINARY_DIR@/Release"
+)
+
+set(_configured_extra_bundle_dirs "@OCEANDL_EXTRA_BUNDLE_DIRS@")
+if(_configured_extra_bundle_dirs)
+    list(APPEND _bundle_search_dirs ${_configured_extra_bundle_dirs})
+endif()
+
+list(REMOVE_DUPLICATES _bundle_search_dirs)
+set(_existing_bundle_search_dirs "")
+foreach(_dir IN LISTS _bundle_search_dirs)
+    if(_dir AND EXISTS "${_dir}")
+        list(APPEND _existing_bundle_search_dirs "${_dir}")
+    endif()
+endforeach()
+
+fixup_bundle(
+    "${_app}"
+    ""
+    "${_existing_bundle_search_dirs}"
+    IGNORE_ITEM "linux-vdso.so.1"
+)
+
+if(UNIX AND NOT APPLE)
+    find_program(_patchelf_EXECUTABLE NAMES patchelf REQUIRED)
+    execute_process(
+        COMMAND "${_patchelf_EXECUTABLE}" --set-rpath "$ORIGIN" "${_app}"
+        COMMAND_ERROR_IS_FATAL ANY
+    )
+
+    file(
+        GLOB _bundled_shared_libraries
+        LIST_DIRECTORIES false
+        "${_install_prefix}/@CMAKE_INSTALL_BINDIR@/*.so"
+        "${_install_prefix}/@CMAKE_INSTALL_BINDIR@/*.so.*"
+    )
+    foreach(_library IN LISTS _bundled_shared_libraries)
+        if(NOT IS_SYMLINK "${_library}")
+            execute_process(
+                COMMAND "${_patchelf_EXECUTABLE}" --set-rpath "$ORIGIN" "${_library}"
+                COMMAND_ERROR_IS_FATAL ANY
+            )
+        endif()
+    endforeach()
+endif()

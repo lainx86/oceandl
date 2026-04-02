@@ -18,13 +18,23 @@ FileValidationResult validate_netcdf_file(
     std::optional<std::uintmax_t> expected_size
 ) {
     if (!std::filesystem::exists(path) || !std::filesystem::is_regular_file(path)) {
-        return {.valid = false, .expected_size = expected_size, .reason = "file not found."};
+        return {
+            .valid = false,
+            .actual_size = std::nullopt,
+            .expected_size = expected_size,
+            .reason = "file not found."
+        };
     }
 
     std::error_code size_error;
     const auto actual_size = std::filesystem::file_size(path, size_error);
     if (size_error) {
-        return {.valid = false, .expected_size = expected_size, .reason = size_error.message()};
+        return {
+            .valid = false,
+            .actual_size = std::nullopt,
+            .expected_size = expected_size,
+            .reason = size_error.message()
+        };
     }
 
     if (expected_size.has_value() && actual_size != *expected_size) {
@@ -99,6 +109,7 @@ FileValidationResult validate_dataset_file(
 
     return {
         .valid = false,
+        .actual_size = std::nullopt,
         .expected_size = expected_size,
         .reason = "unrecognized dataset validation format."
     };

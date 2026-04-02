@@ -3,14 +3,48 @@ cmake_minimum_required(VERSION 3.24)
 project(oceandl VERSION 0.2.0 LANGUAGES CXX)
 
 include(GNUInstallDirs)
+include(CTest)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
+option(
+    OCEANDL_STRICT_WARNINGS
+    "Enable the maintainer warning policy for oceandl targets."
+    OFF
+)
+
+option(
+    OCEANDL_ENABLE_RELEASE_BUNDLE
+    "Bundle non-system runtime dependencies into the install tree for release archives."
+    OFF
+)
+set(
+    OCEANDL_EXTRA_BUNDLE_DIRS
+    ""
+    CACHE STRING
+    "Additional directories searched when bundling runtime dependencies."
+)
+
 find_package(CURL REQUIRED)
 find_package(fmt CONFIG REQUIRED)
 find_package(tomlplusplus CONFIG REQUIRED)
+
+function(oceandl_apply_warnings target_name)
+    if(NOT OCEANDL_STRICT_WARNINGS)
+        return()
+    endif()
+
+    if(MSVC)
+        target_compile_options(${target_name} PRIVATE /W4 /WX)
+        return()
+    endif()
+
+    if(CMAKE_CXX_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
+        target_compile_options(${target_name} PRIVATE -Wall -Wextra -Wpedantic -Werror)
+    endif()
+endfunction()
 
 add_library(oceandl_lib
     cpp/src/builtin_datasets.cpp
@@ -35,9 +69,11 @@ add_library(oceandl_lib
 
 target_include_directories(oceandl_lib PUBLIC cpp/include)
 target_link_libraries(oceandl_lib PUBLIC CURL::libcurl fmt::fmt tomlplusplus::tomlplusplus)
+oceandl_apply_warnings(oceandl_lib)
 
 add_executable(oceandl cpp/src/main.cpp)
 target_link_libraries(oceandl PRIVATE oceandl_lib)
+oceandl_apply_warnings(oceandl)
 
 install(TARGETS oceandl RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 install(
@@ -52,8 +88,38 @@ install(
     DESTINATION ${CMAKE_INSTALL_DOCDIR}
 )
 
+if(OCEANDL_ENABLE_RELEASE_BUNDLE)
+    set(_oceandl_bundle_script "${CMAKE_CURRENT_BINARY_DIR}/oceandl_install_bundle.cmake")
+    configure_file(
+        cmake/oceandl_install_bundle.cmake.in
+        "${_oceandl_bundle_script}"
+        @ONLY
+    )
+    install(SCRIPT "${_oceandl_bundle_script}")
+endif()
+
 add_executable(oceandl_tests cpp/tests/test_main.cpp)
 target_link_libraries(oceandl_tests PRIVATE oceandl_lib)
+oceandl_apply_warnings(oceandl_tests)
 
-enable_testing()
 add_test(NAME oceandl_tests COMMAND oceandl_tests)
+
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    find_package(Python3 COMPONENTS Interpreter QUIET)
+    if(Python3_Interpreter_FOUND)
+        add_test(
+            NAME oceandl_integration_http_local
+            COMMAND
+                "${Python3_EXECUTABLE}"
+                "${CMAKE_CURRENT_SOURCE_DIR}/cpp/tests/hermetic_http_integration.py"
+                --oceandl "$<TARGET_FILE:oceandl>"
+                --work-dir "${CMAKE_CURRENT_BINARY_DIR}/oceandl-http-integration"
+        )
+        set_tests_properties(
+            oceandl_integration_http_local
+            PROPERTIES
+                LABELS integration
+                TIMEOUT 60
+        )
+    endif()
+endif()

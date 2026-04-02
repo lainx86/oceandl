@@ -2,6 +2,22 @@
 
 `oceandl` is a lightweight C++ CLI for downloading ocean/climate NetCDF datasets from NOAA PSL. The project is still in alpha: the current focus is safe download flow, practical resume behavior, and a codebase that stays simple to extend.
 
+## Alpha status
+
+`oceandl` should currently be read as:
+
+- alpha
+- source-first
+- intended for technical early adopters and contributors
+
+What that means in practice:
+
+- The recommended installation path today is still building from source on one of the CI-covered platforms.
+- GitHub Releases may publish CI-built archives for convenience, but they are still alpha artifacts, not a promise of "stable binary-first" support.
+- Package-manager distribution is still limited. There is no official Homebrew formula, Scoop/Winget package, or distro-hosted package feed yet.
+- The only first-stage package-manager target maintained in this repository today is the Arch `makepkg` package spec described below.
+- Backward compatibility and platform support should be treated as improving, not frozen.
+
 ## Features
 
 - Native C++ CLI with a `CMake` build
@@ -34,9 +50,21 @@ Built-in datasets:
 - `hgt_pressure` - NCEP Reanalysis 2 Geopotential Height
 - `omega_pressure` - NCEP Reanalysis 2 Vertical Velocity
 
-## Build
+## Support matrix
 
-Expected system dependencies:
+The table below describes the platforms that are exercised in CI today and how users are expected to approach them.
+
+| Platform | CI coverage today | Recommended path | Notes |
+| --- | --- | --- | --- |
+| Linux (`ubuntu-latest` reference in CI) | configure, build, `ctest`, CLI smoke, strict warnings, hermetic localhost HTTP integration | source build from distro packages | Most thoroughly exercised path today. |
+| macOS (`macos-latest` reference in CI) | configure, build, `ctest`, CLI smoke | source build from Homebrew packages | CI-covered, but Linux still has the deepest automated coverage. |
+| Windows (`windows-latest` with MSVC + `vcpkg`) | configure, build, `ctest`, CLI smoke | source build from Visual Studio/Build Tools + `vcpkg` | CI-covered; use the `vcpkg` toolchain path documented below. |
+
+Only the CI-covered platforms above should be described as supported in public docs or release notes.
+
+## Install dependencies
+
+Expected build dependencies:
 
 - CMake
 - C++20 compiler
@@ -44,22 +72,72 @@ Expected system dependencies:
 - `fmt`
 - `tomlplusplus`
 
-For Windows CI and reproducible dependency bootstrap, this repo also ships `vcpkg.json`.
+For Windows and reproducible dependency bootstrap, this repo also ships `vcpkg.json`.
 
-Platforms currently covered by CI:
-
-- Linux
-- macOS
-- Windows
-
-Local build:
+Linux example (`ubuntu-latest` / Debian / Ubuntu, same package bootstrap used in CI):
 
 ```bash
-cmake -S . -B build
-cmake --build build
+sudo apt-get update
+sudo apt-get install -y \
+  build-essential \
+  cmake \
+  ninja-build \
+  libcurl4-openssl-dev \
+  libfmt-dev \
+  libtomlplusplus-dev
 ```
 
-Install the binary to a custom prefix:
+Linux note for Arch-like distributions:
+
+```bash
+sudo pacman -S --needed base-devel cmake ninja curl fmt tomlplusplus
+```
+
+Package names differ across Linux distributions. If you are not on Debian/Ubuntu or Arch-like Linux, install the equivalent development packages for `libcurl`, `fmt`, and `tomlplusplus`, then use the source-build commands below.
+
+macOS example (Homebrew):
+
+```bash
+brew update
+brew install cmake ninja curl fmt tomlplusplus
+```
+
+Windows example (Developer PowerShell for Visual Studio 2022 or Build Tools 2022):
+
+Prerequisites:
+
+- MSVC toolchain with "Desktop development with C++"
+- a local `vcpkg` checkout
+
+```powershell
+$env:VCPKG_INSTALLATION_ROOT = "C:\src\vcpkg"
+& "$env:VCPKG_INSTALLATION_ROOT\vcpkg.exe" install `
+  curl:x64-windows `
+  fmt:x64-windows `
+  tomlplusplus:x64-windows
+```
+
+## Build from source
+
+Linux/macOS:
+
+```bash
+cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+cmake --build build --parallel
+ctest --test-dir build --output-on-failure
+```
+
+Windows PowerShell:
+
+```powershell
+cmake -S . -B build `
+  -DCMAKE_BUILD_TYPE=Release `
+  -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_INSTALLATION_ROOT\scripts\buildsystems\vcpkg.cmake"
+cmake --build build --config Release --parallel
+ctest --test-dir build --build-config Release --output-on-failure
+```
+
+Install the binary to a custom prefix (Linux/macOS):
 
 ```bash
 cmake --install build --prefix /tmp/oceandl-install
@@ -71,20 +149,6 @@ Windows install example:
 cmake --install build --config Release --prefix "$env:TEMP\oceandl-install"
 ```
 
-Run tests:
-
-```bash
-ctest --test-dir build --output-on-failure
-```
-
-Windows PowerShell example:
-
-```powershell
-cmake -S . -B build
-cmake --build build --config Release
-ctest --test-dir build --build-config Release --output-on-failure
-```
-
 Run the binary:
 
 ```bash
@@ -94,6 +158,38 @@ Run the binary:
 ./build/oceandl info gpcp
 ./build/oceandl download gpcp
 ```
+
+## Package manager path
+
+The first official package-manager target is:
+
+- Arch `makepkg` / AUR-compatible source package
+
+Why this one first:
+
+- Linux is the most thoroughly exercised platform in CI today.
+- A single source package is lower-maintenance than trying to launch Homebrew plus a Windows ecosystem at the same time.
+- The package can build from a formal source release asset with a published SHA-256 checksum.
+
+Authoritative files live in:
+
+- `packaging/arch/oceandl/PKGBUILD`
+- `packaging/arch/oceandl/.SRCINFO`
+
+Current status:
+
+- the package spec is maintained in this repository,
+- the release workflow now defines the formal source asset contract `oceandl-src-vX.Y.Z.tar.gz`,
+- external publication, such as a public AUR package, is still a maintainer follow-up after tagged releases are flowing.
+
+Once a matching tagged release exists, the package can be built with:
+
+```bash
+cd packaging/arch/oceandl
+makepkg -si
+```
+
+For now, source build remains the default recommendation for most users.
 
 ## Commands
 
@@ -226,6 +322,8 @@ Notes:
 - HTTP error responses (`4xx/5xx`) are never persisted into `.part` files.
 - `.part` files are removed after integrity/payload validation failures.
 - Resume only proceeds when remote identity checks (ETag or Last-Modified) are safe.
+- A target-specific `.lock` artifact is temporary. After a successful download, skip, or stale-lock recovery, it is removed automatically.
+- If a crash or forced interruption leaves a `.lock` artifact behind, rerun `oceandl`. The tool will either recover the stale lock or report that another process still owns the target.
 
 ## Troubleshooting
 
@@ -236,7 +334,7 @@ Notes:
 - `retry_count must be between 0 and 10`:
   Reduce `retry_count` in CLI flags or `config.toml`.
 - `target is already being used by another process`:
-  Another `oceandl` process is downloading the same target; wait for it to finish.
+  Another `oceandl` process is downloading the same target, or a stale lock still needs recovery; wait for the active process to finish and rerun the command.
 
 ## Output layout
 
@@ -271,9 +369,34 @@ Notes:
 
 ## Release and distribution
 
+- Public release posture remains alpha and source-first.
 - CI builds and tests on Linux, macOS, and Windows.
-- Tagging `v*` triggers the release workflow that builds platform artifacts and uploads them to GitHub Releases.
-- Produced artifacts include the binary plus `README`, `LICENSE`, and `CHANGELOG`.
+- Tagging `v*` triggers the release workflow that builds platform archives, smoke-tests the extracted artifacts, and uploads them to GitHub Releases.
+- Produced artifacts include platform archives, a formal source archive `oceandl-src-vX.Y.Z.tar.gz`, and a `SHA256SUMS` file for integrity verification.
+- Current recommendation:
+  - prefer the source-build path above for the most predictable setup,
+  - treat GitHub Release archives as convenience artifacts for supported CI-covered platforms,
+  - treat the in-repo Arch `makepkg` package spec as the first official package-manager target,
+  - do not treat the project as a stable binary-first or broad package-manager distribution yet.
+- Detached release signatures are not published yet; SHA-256 checksums are the current baseline until maintainer-managed signing keys are in place.
+
+Checksum verification examples:
+
+```bash
+sha256sum -c SHA256SUMS
+```
+
+```powershell
+$expected = (Select-String 'oceandl-windows-x64.zip' .\SHA256SUMS).ToString().Split(' ')[0]
+$actual = (Get-FileHash .\oceandl-windows-x64.zip -Algorithm SHA256).Hash.ToLower()
+if ($actual -ne $expected) { throw "checksum mismatch" }
+```
+
+## Security reporting
+
+- Do not open public issues for suspected vulnerabilities.
+- Report security findings privately to `febysyarief.dev@gmail.com`.
+- See [SECURITY.md](SECURITY.md) for the reporting format and response targets.
 
 ## Open-source project files
 

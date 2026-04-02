@@ -23,9 +23,6 @@ class TargetFileLock {
   private:
     std::filesystem::path lock_path_;
     bool acquired_ = false;
-#ifndef _WIN32
-    int fd_ = -1;
-#endif
 };
 
 }  // namespace oceandl

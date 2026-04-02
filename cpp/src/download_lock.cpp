@@ -147,43 +147,30 @@ bool has_running_peer_process() {
     return false;
 }
 
-void write_all(int fd, std::string_view payload) {
-    std::size_t offset = 0;
-    while (offset < payload.size()) {
-        const auto written = ::write(
-            fd,
-            payload.data() + offset,
-            payload.size() - offset
-        );
-        if (written < 0) {
-            if (errno == EINTR) {
-                continue;
-            }
-            throw std::runtime_error("failed to write lock metadata.");
-        }
-        offset += static_cast<std::size_t>(written);
+void write_lock_owner_metadata(const std::filesystem::path& path) {
+    std::ofstream output(path, std::ios::binary | std::ios::trunc);
+    if (!output) {
+        throw std::runtime_error("failed to open lock metadata.");
     }
-}
-
-void write_lock_owner_metadata(int fd) {
-    if (::ftruncate(fd, 0) != 0) {
-        throw std::runtime_error("failed to reset lock metadata.");
+    output << fmt::format("pid {}\n", current_process_id());
+    if (!output) {
+        throw std::runtime_error("failed to write lock metadata.");
     }
-    if (::lseek(fd, 0, SEEK_SET) < 0) {
-        throw std::runtime_error("failed to seek lock metadata.");
-    }
-    write_all(fd, fmt::format("pid {}\n", current_process_id()));
 }
 #endif
 
-void recover_legacy_lock_directory(const DownloadTarget& target, const Reporter& reporter) {
+std::filesystem::path lock_owner_path(const std::filesystem::path& lock_path) {
+    return lock_path / "owner";
+}
+
+void recover_existing_lock_directory(const DownloadTarget& target, const Reporter& reporter) {
     const auto lock_path = target.lock_path();
     std::error_code error;
     if (!std::filesystem::is_directory(lock_path, error) || error) {
         return;
     }
 
-    const auto owner_pid = load_lock_owner_pid(lock_path / "owner");
+    const auto owner_pid = load_lock_owner_pid(lock_owner_path(lock_path));
 #ifndef _WIN32
     if (owner_pid.has_value() && process_is_alive(*owner_pid)) {
         throw DownloadLockError(lock_conflict_message(target, owner_pid));
@@ -210,57 +197,81 @@ void recover_legacy_lock_directory(const DownloadTarget& target, const Reporter&
         );
     }
 
-    reporter.warning(fmt::format("Removing stale legacy lock {}", target.file_name));
+    reporter.warning(fmt::format("Removing stale lock {}", target.file_name));
 }
 
-}  // namespace
-
-TargetFileLock::TargetFileLock(const DownloadTarget& target, const Reporter& reporter)
-    : lock_path_(target.lock_path()) {
-    recover_legacy_lock_directory(target, reporter);
-
 #ifndef _WIN32
-    fd_ = ::open(lock_path_.c_str(), O_RDWR | O_CREAT | O_CLOEXEC, 0600);
-    if (fd_ < 0) {
+void recover_legacy_lock_file(const DownloadTarget& target, const Reporter& reporter) {
+    const auto lock_path = target.lock_path();
+    std::error_code error;
+    if (!std::filesystem::is_regular_file(lock_path, error) || error) {
+        return;
+    }
+
+    const int fd = ::open(lock_path.c_str(), O_RDWR | O_CLOEXEC);
+    if (fd < 0) {
+        if (errno == ENOENT) {
+            return;
+        }
         throw std::runtime_error(
             fmt::format(
-                "failed to open lock file {}: {}",
+                "failed to inspect legacy lock file {}: {}",
                 target.file_name,
                 std::strerror(errno)
             )
         );
     }
 
-    if (::flock(fd_, LOCK_EX | LOCK_NB) != 0) {
+    if (::flock(fd, LOCK_EX | LOCK_NB) != 0) {
         const int lock_error = errno;
-        ::close(fd_);
-        fd_ = -1;
+        ::close(fd);
         if (lock_error == EWOULDBLOCK || lock_error == EAGAIN) {
-            throw DownloadLockError(
-                lock_conflict_message(target, load_lock_owner_pid(lock_path_))
-            );
+            throw DownloadLockError(lock_conflict_message(target, load_lock_owner_pid(lock_path)));
         }
         throw std::runtime_error(
             fmt::format(
-                "failed to lock target {}: {}",
+                "failed to inspect legacy lock file {}: {}",
                 target.file_name,
                 std::strerror(lock_error)
             )
         );
     }
+    ::close(fd);
 
-    try {
-        write_lock_owner_metadata(fd_);
-    } catch (...) {
-        ::close(fd_);
-        fd_ = -1;
-        throw;
+    std::filesystem::remove(lock_path, error);
+    if (error || std::filesystem::exists(lock_path)) {
+        throw std::runtime_error(
+            fmt::format("failed to clean up stale legacy lock file: {}", target.file_name)
+        );
     }
-#else
+
+    reporter.warning(fmt::format("Removing stale legacy lock file {}", target.file_name));
+}
+#endif
+
+}  // namespace
+
+TargetFileLock::TargetFileLock(const DownloadTarget& target, const Reporter& reporter)
+    : lock_path_(target.lock_path()) {
+    recover_existing_lock_directory(target, reporter);
+
+#ifndef _WIN32
+    recover_legacy_lock_file(target, reporter);
+#endif
+
     std::error_code error;
     const bool created = std::filesystem::create_directory(lock_path_, error);
     if (!created || error) {
         throw DownloadLockError(lock_conflict_message(target));
+    }
+
+#ifndef _WIN32
+    try {
+        write_lock_owner_metadata(lock_owner_path(lock_path_));
+    } catch (...) {
+        std::error_code cleanup_error;
+        std::filesystem::remove_all(lock_path_, cleanup_error);
+        throw;
     }
 #endif
     acquired_ = true;
@@ -271,15 +282,8 @@ TargetFileLock::~TargetFileLock() {
         return;
     }
 
-#ifndef _WIN32
-    if (fd_ >= 0) {
-        ::close(fd_);
-        fd_ = -1;
-    }
-#else
     std::error_code error;
-    std::filesystem::remove(lock_path_, error);
-#endif
+    std::filesystem::remove_all(lock_path_, error);
 }
 
 }  // namespace oceandl

@@ -31,6 +31,7 @@ jobs:
             build-essential \
             cmake \
             ninja-build \
+            patchelf \
             libcurl4-openssl-dev \
             libfmt-dev \
             libtomlplusplus-dev
@@ -53,9 +54,19 @@ jobs:
             fmt:x64-windows `
             tomlplusplus:x64-windows
 
-      - name: Configure (Linux/macOS)
-        if: runner.os != 'Windows'
-        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+      - name: Configure (Linux)
+        if: runner.os == 'Linux'
+        run: >
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+          -DOCEANDL_ENABLE_RELEASE_BUNDLE=ON
+          -DOCEANDL_EXTRA_BUNDLE_DIRS="/usr/lib;/usr/local/lib"
+
+      - name: Configure (macOS)
+        if: runner.os == 'macOS'
+        run: >
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+          -DOCEANDL_ENABLE_RELEASE_BUNDLE=ON
+          -DOCEANDL_EXTRA_BUNDLE_DIRS="/opt/homebrew/lib;/usr/local/lib"
 
       - name: Configure (Windows)
         if: runner.os == 'Windows'
@@ -64,6 +75,8 @@ jobs:
           if (-not $env:VCPKG_INSTALLATION_ROOT) { throw "VCPKG_INSTALLATION_ROOT is not set." };
           cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
           -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake"
+          -DOCEANDL_ENABLE_RELEASE_BUNDLE=ON
+          -DOCEANDL_EXTRA_BUNDLE_DIRS="$env:VCPKG_INSTALLATION_ROOT/installed/x64-windows/bin"
 
       - name: Build (Linux/macOS)
         if: runner.os != 'Windows'
@@ -87,21 +100,25 @@ jobs:
         if: runner.os != 'Windows'
         shell: bash
         run: |
+          package_dir="$PWD/dist/oceandl-${RUNNER_OS,,}-x64"
           archive="oceandl-${RUNNER_OS,,}-x64.tar.gz"
-          mkdir -p dist
-          cp build/oceandl dist/
-          cp README.md LICENSE CHANGELOG.md dist/
-          tar -C dist -czf "$archive" oceandl README.md LICENSE CHANGELOG.md
-          rm -rf dist
+
+          rm -rf "$package_dir"
+          cmake --install build --prefix "$package_dir"
+
+          tar -C "$PWD/dist" -czf "$archive" "oceandl-${RUNNER_OS,,}-x64"
 
       - name: Pack artifact (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          New-Item -ItemType Directory -Force -Path dist | Out-Null
-          Copy-Item .\build\Release\oceandl.exe .\dist\oceandl.exe
-          Copy-Item .\README.md, .\LICENSE, .\CHANGELOG.md .\dist\
-          Compress-Archive -Path .\dist\* -DestinationPath .\oceandl-windows-x64.zip -Force
+          $packageDir = Join-Path $PWD "dist/oceandl-windows-x64"
+          Remove-Item -Recurse -Force $packageDir -ErrorAction SilentlyContinue
+          New-Item -ItemType Directory -Force -Path .\dist | Out-Null
+
+          cmake --install build --config Release --prefix $packageDir
+
+          Compress-Archive -Path $packageDir -DestinationPath .\oceandl-windows-x64.zip -Force
 
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
@@ -111,11 +128,50 @@ jobs:
             oceandl-*.tar.gz
             oceandl-*.zip
 
+  verify-artifacts:
+    needs: build-artifacts
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            artifact_name: oceandl-Linux-artifact
+            archive_name: oceandl-linux-x64.tar.gz
+          - os: macos-latest
+            artifact_name: oceandl-macOS-artifact
+            archive_name: oceandl-macos-x64.tar.gz
+          - os: windows-latest
+            artifact_name: oceandl-Windows-artifact
+            archive_name: oceandl-windows-x64.zip
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download packaged artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ matrix.artifact_name }}
+          path: verify-assets
+
+      - name: Smoke test final archive (Linux/macOS)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          bash ./scripts/verify_release_archive.sh "verify-assets/${{ matrix.archive_name }}"
+
+      - name: Smoke test final archive (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          .\scripts\verify_release_archive.ps1 -ArchivePath "verify-assets\${{ matrix.archive_name }}"
+
   publish:
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: build-artifacts
+    needs: verify-artifacts
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v4
+
       - name: Download packaged artifacts
         uses: actions/download-artifact@v4
         with:
@@ -123,9 +179,23 @@ jobs:
           pattern: oceandl-*-artifact
           merge-multiple: true
 
+      - name: Create formal source release archive
+        shell: bash
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          bash ./scripts/create_source_release.sh "$version" "release-assets/oceandl-src-v${version}.tar.gz"
+
+      - name: Generate release checksums
+        shell: bash
+        run: |
+          cd release-assets
+          sha256sum oceandl-*.tar.gz oceandl-*.zip > SHA256SUMS
+          sha256sum -c SHA256SUMS
+
       - name: Publish GitHub Release assets
         uses: softprops/action-gh-release@v2
         with:
           files: |
             release-assets/oceandl-*.tar.gz
             release-assets/oceandl-*.zip
+            release-assets/SHA256SUMS
