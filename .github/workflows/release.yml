@@ -102,7 +102,7 @@ jobs:
             if (Test-Path $vcpkgRoot) {
               Remove-Item -Recurse -Force $vcpkgRoot
             }
-            git clone --depth 1 https://github.com/microsoft/vcpkg.git "$vcpkgRoot"
+            git clone https://github.com/microsoft/vcpkg.git "$vcpkgRoot"
           }
 
           if (-not (Test-Path (Join-Path $vcpkgRoot "vcpkg.exe"))) {
