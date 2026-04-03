@@ -106,7 +106,7 @@ jobs:
 
       - name: Verify AUR package path
         run: |
-          version="$(sed -n 's/^project(oceandl VERSION \\([0-9.]*\\) LANGUAGES CXX)$/\\1/p' CMakeLists.txt)"
+          version="$(awk '/^project\(oceandl VERSION / { print $3; exit }' CMakeLists.txt)"
           if [ -z "$version" ]; then
             echo "failed to read project version from CMakeLists.txt" >&2
             exit 1
