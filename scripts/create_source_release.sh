@@ -31,7 +31,7 @@ tmp_output="$output_dir/.${output_name}.tmp"
     if [ -e "$path" ]; then
       printf '%s\0' "$path"
     fi
-  done < <(git ls-files -z) \
+  done < <(git -c safe.directory="$repo_root" ls-files -z) \
     | tar \
       --null \
       --files-from=- \

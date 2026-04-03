@@ -17,22 +17,39 @@ cleanup() {
 }
 trap cleanup EXIT
 
+archive_copy="$work_dir/$(basename "$archive_path")"
+cp -a "$archive_path" "$archive_copy"
 cp -a "$pkgbuild_dir"/. "$work_dir/pkgbuild"
 
-pushd "$work_dir/pkgbuild" >/dev/null
-OCEANDL_SOURCE_URL="file://${archive_path}" \
-OCEANDL_SOURCE_SHA256="$archive_sha256" \
-makepkg --force --nodeps --cleanbuild
-package_path=$(find . -maxdepth 1 -type f -name '*.pkg.tar*' | head -n 1)
+if [ "$EUID" -eq 0 ]; then
+  builder_user=oceandl-builder
+  if ! id -u "$builder_user" >/dev/null 2>&1; then
+    useradd --create-home --shell /bin/bash "$builder_user"
+  fi
+  chown -R "$builder_user:$builder_user" "$work_dir"
+  su -s /bin/bash "$builder_user" -c "
+    cd \"$work_dir/pkgbuild\" && \
+    OCEANDL_SOURCE_URL=\"file://${archive_copy}\" \
+    OCEANDL_SOURCE_SHA256=\"$archive_sha256\" \
+    makepkg --force --nodeps --cleanbuild
+  "
+else
+  pushd "$work_dir/pkgbuild" >/dev/null
+  OCEANDL_SOURCE_URL="file://${archive_copy}" \
+  OCEANDL_SOURCE_SHA256="$archive_sha256" \
+  makepkg --force --nodeps --cleanbuild
+  popd >/dev/null
+fi
+
+package_path=$(find "$work_dir/pkgbuild" -maxdepth 1 -type f -name '*.pkg.tar*' | head -n 1)
 if [ -z "$package_path" ]; then
   echo "makepkg did not produce a package archive" >&2
   exit 1
 fi
-popd >/dev/null
 
 extract_root="$work_dir/extract"
 mkdir -p "$extract_root"
-bsdtar -xf "$work_dir/pkgbuild/$package_path" -C "$extract_root"
+bsdtar -xf "$package_path" -C "$extract_root"
 
 binary_path="$extract_root/usr/bin/oceandl"
 if [ ! -x "$binary_path" ]; then
