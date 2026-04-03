@@ -46,10 +46,32 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          if (-not $env:VCPKG_INSTALLATION_ROOT) {
-            throw "VCPKG_INSTALLATION_ROOT is not set."
+          $candidateRoots = @()
+          if ($env:VCPKG_INSTALLATION_ROOT) {
+            $candidateRoots += $env:VCPKG_INSTALLATION_ROOT
           }
-          & "$env:VCPKG_INSTALLATION_ROOT\vcpkg.exe" install `
+          $candidateRoots += @(
+            "C:\vcpkg",
+            (Join-Path $env:RUNNER_TEMP "vcpkg")
+          )
+
+          $vcpkgRoot = $null
+          foreach ($candidate in $candidateRoots) {
+            if ($candidate -and (Test-Path (Join-Path $candidate "vcpkg.exe"))) {
+              $vcpkgRoot = $candidate
+              break
+            }
+          }
+
+          if (-not $vcpkgRoot) {
+            $vcpkgRoot = Join-Path $env:RUNNER_TEMP "vcpkg"
+            git clone --depth 1 https://github.com/microsoft/vcpkg.git $vcpkgRoot
+            & "$vcpkgRoot\bootstrap-vcpkg.bat" -disableMetrics
+          }
+
+          "VCPKG_INSTALLATION_ROOT=$vcpkgRoot" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+          & "$vcpkgRoot\vcpkg.exe" install `
             curl:x64-windows `
             fmt:x64-windows `
             tomlplusplus:x64-windows

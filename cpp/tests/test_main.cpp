@@ -14,8 +14,6 @@
 #include <vector>
 
 #ifndef _WIN32
-#include <fcntl.h>
-#include <sys/file.h>
 #include <unistd.h>
 #endif
 
@@ -59,53 +57,38 @@ class TempDir {
     std::filesystem::path path_;
 };
 
-class ScopedFileLock {
+class ScopedTargetLock {
   public:
-    explicit ScopedFileLock(const std::filesystem::path& path) {
-        std::filesystem::create_directories(path.parent_path());
-#ifdef _WIN32
-        lock_path_ = path;
+    explicit ScopedTargetLock(const std::filesystem::path& path) : lock_path_(path) {
+        std::filesystem::create_directories(lock_path_.parent_path());
         std::error_code error;
         const bool created = std::filesystem::create_directory(lock_path_, error);
         if (!created || error) {
             throw std::runtime_error("failed to acquire test lock directory");
         }
-#else
-        fd_ = ::open(path.c_str(), O_RDWR | O_CREAT | O_CLOEXEC, 0600);
-        if (fd_ < 0) {
-            throw std::runtime_error("failed to open test lock file");
+
+#ifndef _WIN32
+        std::ofstream owner(lock_path_ / "owner", std::ios::binary | std::ios::trunc);
+        if (!owner) {
+            throw std::runtime_error("failed to open test lock metadata");
         }
-        if (::flock(fd_, LOCK_EX | LOCK_NB) != 0) {
-            const int lock_error = errno;
-            ::close(fd_);
-            fd_ = -1;
-            throw std::runtime_error(
-                "failed to acquire test lock: " + std::to_string(lock_error)
-            );
+        owner << "pid " << static_cast<long long>(::getpid()) << "\n";
+        if (!owner) {
+            throw std::runtime_error("failed to write test lock metadata");
         }
 #endif
     }
 
-    ~ScopedFileLock() {
-#ifdef _WIN32
+    ~ScopedTargetLock() {
         std::error_code error;
-        std::filesystem::remove(lock_path_, error);
-#else
-        if (fd_ >= 0) {
-            ::close(fd_);
-        }
-#endif
+        std::filesystem::remove_all(lock_path_, error);
     }
 
-    ScopedFileLock(const ScopedFileLock&) = delete;
-    ScopedFileLock& operator=(const ScopedFileLock&) = delete;
+    ScopedTargetLock(const ScopedTargetLock&) = delete;
+    ScopedTargetLock& operator=(const ScopedTargetLock&) = delete;
 
   private:
-#ifdef _WIN32
     std::filesystem::path lock_path_;
-#else
-    int fd_ = -1;
-#endif
 };
 
 int current_calendar_year() {
@@ -887,7 +870,7 @@ bool test_downloader_fails_when_target_is_locked() {
     auto request = fixture_request(temp_dir.path());
 
     const auto lock_path = temp_dir.path() / dataset.id / "fixture.nc.lock";
-    ScopedFileLock lock(lock_path);
+    ScopedTargetLock lock(lock_path);
 
     int head_calls = 0;
     int get_calls = 0;

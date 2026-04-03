@@ -6,6 +6,13 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 
 ## [Unreleased]
 
+## [0.2.2] - 2026-04-03
+
+### Fixed
+
+- GitHub Actions Windows jobs now resolve or bootstrap `vcpkg` instead of assuming `VCPKG_INSTALLATION_ROOT` is pre-set by the runner image.
+- Lock-conflict coverage now follows the current lock-directory implementation, which avoids same-process `flock` behavior differences on BSD/macOS and keeps the test portable across CI platforms.
+
 ## [0.2.1] - 2026-04-03
 
 ### Changed
