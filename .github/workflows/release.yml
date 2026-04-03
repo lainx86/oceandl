@@ -11,20 +11,12 @@ permissions:
 
 jobs:
   build-artifacts:
-    strategy:
-      fail-fast: false
-      matrix:
-        os:
-          - ubuntu-latest
-          - macos-latest
-          - windows-latest
-    runs-on: ${{ matrix.os }}
+    runs-on: ubuntu-latest
 
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install dependencies (Ubuntu)
-        if: runner.os == 'Linux'
+      - name: Install dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y \
@@ -36,167 +28,51 @@ jobs:
             libfmt-dev \
             libtomlplusplus-dev
 
-      - name: Install dependencies (macOS)
-        if: runner.os == 'macOS'
-        run: |
-          brew update
-          brew install cmake ninja curl fmt tomlplusplus
-
-      - name: Install dependencies (Windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          $candidateRoots = @()
-          if ($env:VCPKG_INSTALLATION_ROOT) {
-            $candidateRoots += $env:VCPKG_INSTALLATION_ROOT
-          }
-          $candidateRoots += @(
-            "C:\vcpkg"
-          )
-
-          $vcpkgRoot = $null
-          foreach ($candidate in $candidateRoots) {
-            if (-not $candidate) {
-              continue
-            }
-            if (
-              (Test-Path (Join-Path $candidate "vcpkg.exe")) -or
-              (Test-Path (Join-Path $candidate "bootstrap-vcpkg.bat"))
-            ) {
-              $vcpkgRoot = $candidate
-              break
-            }
-          }
-
-          if (-not $vcpkgRoot) {
-            $vcpkgRoot = Join-Path $env:RUNNER_TEMP "vcpkg"
-            if (Test-Path $vcpkgRoot) {
-              Remove-Item -Recurse -Force $vcpkgRoot
-            }
-            git clone --depth 1 https://github.com/microsoft/vcpkg.git "$vcpkgRoot"
-          }
-
-          if (-not (Test-Path (Join-Path $vcpkgRoot "vcpkg.exe"))) {
-            & "$vcpkgRoot\bootstrap-vcpkg.bat" -disableMetrics
-          }
-
-          "VCPKG_INSTALLATION_ROOT=$vcpkgRoot" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-
-          & "$vcpkgRoot\vcpkg.exe" install `
-            curl:x64-windows `
-            fmt:x64-windows `
-            tomlplusplus:x64-windows
-
-      - name: Configure (Linux)
-        if: runner.os == 'Linux'
+      - name: Configure
         run: >
           cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
           -DOCEANDL_ENABLE_RELEASE_BUNDLE=ON
           -DOCEANDL_EXTRA_BUNDLE_DIRS="/usr/lib;/usr/local/lib"
 
-      - name: Configure (macOS)
-        if: runner.os == 'macOS'
-        run: >
-          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
-          -DOCEANDL_ENABLE_RELEASE_BUNDLE=ON
-          -DOCEANDL_EXTRA_BUNDLE_DIRS="/opt/homebrew/lib;/usr/local/lib"
-
-      - name: Configure (Windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: >
-          if (-not $env:VCPKG_INSTALLATION_ROOT) { throw "VCPKG_INSTALLATION_ROOT is not set." };
-          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
-          -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake"
-          -DOCEANDL_ENABLE_RELEASE_BUNDLE=ON
-          -DOCEANDL_EXTRA_BUNDLE_DIRS="$env:VCPKG_INSTALLATION_ROOT/installed/x64-windows/bin"
-
-      - name: Build (Linux/macOS)
-        if: runner.os != 'Windows'
+      - name: Build
         run: cmake --build build --parallel
 
-      - name: Build (Windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: cmake --build build --config Release --parallel
-
-      - name: Test (Linux/macOS)
-        if: runner.os != 'Windows'
+      - name: Test
         run: ctest --test-dir build --output-on-failure
 
-      - name: Test (Windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: ctest --test-dir build --build-config Release --output-on-failure
-
-      - name: Pack artifact (Linux/macOS)
-        if: runner.os != 'Windows'
+      - name: Pack artifact
         shell: bash
         run: |
-          package_dir="$PWD/dist/oceandl-${RUNNER_OS,,}-x64"
-          archive="oceandl-${RUNNER_OS,,}-x64.tar.gz"
+          package_dir="$PWD/dist/oceandl-linux-x64"
+          archive="oceandl-linux-x64.tar.gz"
 
           rm -rf "$package_dir"
           cmake --install build --prefix "$package_dir"
 
-          tar -C "$PWD/dist" -czf "$archive" "oceandl-${RUNNER_OS,,}-x64"
-
-      - name: Pack artifact (Windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          $packageDir = Join-Path $PWD "dist/oceandl-windows-x64"
-          Remove-Item -Recurse -Force $packageDir -ErrorAction SilentlyContinue
-          New-Item -ItemType Directory -Force -Path .\dist | Out-Null
-
-          cmake --install build --config Release --prefix $packageDir
-
-          Compress-Archive -Path $packageDir -DestinationPath .\oceandl-windows-x64.zip -Force
+          tar -C "$PWD/dist" -czf "$archive" "oceandl-linux-x64"
 
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
         with:
-          name: oceandl-${{ runner.os }}-artifact
-          path: |
-            oceandl-*.tar.gz
-            oceandl-*.zip
+          name: oceandl-linux-artifact
+          path: oceandl-linux-x64.tar.gz
 
   verify-artifacts:
     needs: build-artifacts
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: ubuntu-latest
-            artifact_name: oceandl-Linux-artifact
-            archive_name: oceandl-linux-x64.tar.gz
-          - os: macos-latest
-            artifact_name: oceandl-macOS-artifact
-            archive_name: oceandl-macos-x64.tar.gz
-          - os: windows-latest
-            artifact_name: oceandl-Windows-artifact
-            archive_name: oceandl-windows-x64.zip
-    runs-on: ${{ matrix.os }}
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
       - name: Download packaged artifact
         uses: actions/download-artifact@v4
         with:
-          name: ${{ matrix.artifact_name }}
+          name: oceandl-linux-artifact
           path: verify-assets
 
-      - name: Smoke test final archive (Linux/macOS)
-        if: runner.os != 'Windows'
+      - name: Smoke test final archive
         shell: bash
         run: |
-          bash ./scripts/verify_release_archive.sh "verify-assets/${{ matrix.archive_name }}"
-
-      - name: Smoke test final archive (Windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          .\scripts\verify_release_archive.ps1 -ArchivePath "verify-assets\${{ matrix.archive_name }}"
+          bash ./scripts/verify_release_archive.sh "verify-assets/oceandl-linux-x64.tar.gz"
 
   publish:
     if: startsWith(github.ref, 'refs/tags/v')
@@ -209,8 +85,7 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           path: release-assets
-          pattern: oceandl-*-artifact
-          merge-multiple: true
+          name: oceandl-linux-artifact
 
       - name: Create formal source release archive
         shell: bash
@@ -222,7 +97,7 @@ jobs:
         shell: bash
         run: |
           cd release-assets
-          sha256sum oceandl-*.tar.gz oceandl-*.zip > SHA256SUMS
+          sha256sum oceandl-*.tar.gz > SHA256SUMS
           sha256sum -c SHA256SUMS
 
       - name: Publish GitHub Release assets
@@ -230,5 +105,4 @@ jobs:
         with:
           files: |
             release-assets/oceandl-*.tar.gz
-            release-assets/oceandl-*.zip
             release-assets/SHA256SUMS

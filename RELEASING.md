@@ -7,6 +7,7 @@ Keep public messaging aligned with the current project state:
 - releases are still alpha,
 - the primary supported path is still source build on the CI-covered platforms,
 - GitHub Release archives are convenience artifacts for evaluation and early adopters, not a claim that `oceandl` is already a stable binary-first product,
+- the maintainer-owned release artifacts currently published by the workflow are Linux `x64` plus the formal source archive,
 - broad package-manager distribution is not published yet and should not be implied in release notes,
 - the first maintainer-owned package-manager target is the Arch `makepkg` package spec in `packaging/arch/oceandl/`.
 
@@ -18,7 +19,7 @@ Keep public messaging aligned with the current project state:
 
 ## Release checklist
 
-1. Ensure `main` is green in CI (Linux/macOS/Windows).
+1. Ensure the Linux release path is green locally and in GitHub Actions before tagging.
 2. Ensure the support matrix and bootstrap commands in `README.md` still match the current CI/toolchain reality.
 3. Ensure the release notes and README language still describe the release as alpha/source-first unless that policy has intentionally changed.
 4. Run local smoke checks from the build tree:
@@ -32,12 +33,11 @@ Keep public messaging aligned with the current project state:
 6. Create a version tag:
    - `git tag vX.Y.Z`
    - `git push origin vX.Y.Z`
-7. Verify the `Release` workflow packages an install tree per platform:
-   - `bin/` contains `oceandl`/`oceandl.exe`
-   - non-system runtime libraries are bundled next to the executable on Linux/Windows
-   - non-system runtime libraries are bundled in `Frameworks/` on macOS
+7. Verify the `Release` workflow packages the Linux install tree:
+   - `bin/` contains `oceandl`
+   - non-system runtime libraries are bundled next to the executable on Linux
 8. Verify the publish job also creates the formal source archive `oceandl-src-vX.Y.Z.tar.gz`.
-9. Verify the workflow re-downloads the final platform archives, extracts them, and smoke-tests the extracted binaries on each platform runner.
+9. Verify the workflow re-downloads the final Linux archive, extracts it, and smoke-tests the extracted binary.
 10. Verify the publish job generates and uploads `SHA256SUMS`.
 11. Verify each uploaded archive can be checked with the published SHA-256 values.
 12. Update `packaging/arch/oceandl/PKGBUILD` with the new `pkgver` and the SHA-256 for `oceandl-src-vX.Y.Z.tar.gz`.

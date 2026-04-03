@@ -6,6 +6,13 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 
 ## [Unreleased]
 
+## [0.2.4] - 2026-04-03
+
+### Changed
+
+- The GitHub `Release` workflow now targets the maintained Linux `x64` release path plus the formal source archive, instead of blocking publication on Windows and macOS artifacts that are not required for AUR distribution.
+- Public release docs now state explicitly that maintainer-owned GitHub Release assets are currently Linux `x64` and source-only.
+
 ## [0.2.3] - 2026-04-03
 
 ### Fixed

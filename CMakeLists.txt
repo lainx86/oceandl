@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.24)
 
-project(oceandl VERSION 0.2.3 LANGUAGES CXX)
+project(oceandl VERSION 0.2.4 LANGUAGES CXX)
 
 include(GNUInstallDirs)
 include(CTest)

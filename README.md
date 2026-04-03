@@ -14,6 +14,7 @@ What that means in practice:
 
 - The recommended installation path today is still building from source on one of the CI-covered platforms.
 - GitHub Releases may publish CI-built archives for convenience, but they are still alpha artifacts, not a promise of "stable binary-first" support.
+- Today that public release path is intentionally narrow: Linux `x64` archives and the formal source archive are the maintained release artifacts.
 - Package-manager distribution is still limited. There is no official Homebrew formula, Scoop/Winget package, or distro-hosted package feed yet.
 - The only first-stage package-manager target maintained in this repository today is the Arch `makepkg` package spec described below.
 - Backward compatibility and platform support should be treated as improving, not frozen.
@@ -56,9 +57,9 @@ The table below describes the platforms that are exercised in CI today and how u
 
 | Platform | CI coverage today | Recommended path | Notes |
 | --- | --- | --- | --- |
-| Linux (`ubuntu-latest` reference in CI) | configure, build, `ctest`, CLI smoke, strict warnings, hermetic localhost HTTP integration | source build from distro packages | Most thoroughly exercised path today. |
-| macOS (`macos-latest` reference in CI) | configure, build, `ctest`, CLI smoke | source build from Homebrew packages | CI-covered, but Linux still has the deepest automated coverage. |
-| Windows (`windows-latest` with MSVC + `vcpkg`) | configure, build, `ctest`, CLI smoke | source build from Visual Studio/Build Tools + `vcpkg` | CI-covered; use the `vcpkg` toolchain path documented below. |
+| Linux (`ubuntu-latest` reference in CI) | configure, build, `ctest`, CLI smoke, strict warnings, hermetic localhost HTTP integration | source build from distro packages | Most thoroughly exercised path today and the only platform with maintainer-owned release archives right now. |
+| macOS (`macos-latest` reference in CI) | configure, build, `ctest`, CLI smoke | source build from Homebrew packages | CI-covered source-build path; no maintainer-owned release archive is published today. |
+| Windows (`windows-latest` with MSVC + `vcpkg`) | configure, build, `ctest`, CLI smoke | source build from Visual Studio/Build Tools + `vcpkg` | CI-covered source-build path; no maintainer-owned release archive is published today. |
 
 Only the CI-covered platforms above should be described as supported in public docs or release notes.
 
@@ -180,6 +181,7 @@ Current status:
 
 - the package spec is maintained in this repository,
 - the release workflow now defines the formal source asset contract `oceandl-src-vX.Y.Z.tar.gz`,
+- GitHub Releases currently publish `oceandl-linux-x64.tar.gz` plus the source archive and `SHA256SUMS`,
 - external publication, such as a public AUR package, is still a maintainer follow-up after tagged releases are flowing.
 
 Once a matching tagged release exists, the package can be built with:
@@ -371,11 +373,11 @@ Notes:
 
 - Public release posture remains alpha and source-first.
 - CI builds and tests on Linux, macOS, and Windows.
-- Tagging `v*` triggers the release workflow that builds platform archives, smoke-tests the extracted artifacts, and uploads them to GitHub Releases.
-- Produced artifacts include platform archives, a formal source archive `oceandl-src-vX.Y.Z.tar.gz`, and a `SHA256SUMS` file for integrity verification.
+- Tagging `v*` triggers the release workflow that builds the Linux release archive, smoke-tests the extracted artifact, and uploads it to GitHub Releases.
+- Produced artifacts currently include `oceandl-linux-x64.tar.gz`, the formal source archive `oceandl-src-vX.Y.Z.tar.gz`, and a `SHA256SUMS` file for integrity verification.
 - Current recommendation:
   - prefer the source-build path above for the most predictable setup,
-  - treat GitHub Release archives as convenience artifacts for supported CI-covered platforms,
+  - treat GitHub Release archives as convenience artifacts for the currently published Linux release path,
   - treat the in-repo Arch `makepkg` package spec as the first official package-manager target,
   - do not treat the project as a stable binary-first or broad package-manager distribution yet.
 - Detached release signatures are not published yet; SHA-256 checksums are the current baseline until maintainer-managed signing keys are in place.
