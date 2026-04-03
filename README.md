@@ -153,86 +153,133 @@ makepkg -si
 
 For most Arch users, the AUR package is the default recommendation. Source build remains the fallback path for maintainers and local debugging.
 
-## Commands
+## Command-line usage
 
-List providers:
+Examples below assume `oceandl` is already on your `PATH` because you installed it from AUR.
+If you are running from the build tree instead, replace `oceandl` with `./build/oceandl`.
+
+### Command reference
+
+| Command | Function | Use when |
+| --- | --- | --- |
+| `oceandl --help` | Show general CLI help | You want the top-level command list and global flags |
+| `oceandl --version` | Print the current binary version | You want to confirm the installed version |
+| `oceandl providers` | List available data providers | You want to know which backend serves the datasets |
+| `oceandl datasets` | List the built-in dataset catalog | You want available dataset IDs before downloading |
+| `oceandl info <dataset>` | Show detailed metadata for one dataset | You want mode, file naming, base URL, and year support |
+| `oceandl download [dataset]` | Download one dataset | You want to fetch files using config defaults plus CLI overrides |
+| `oceandl help <command>` | Show help for one command | You want command-specific syntax and options |
+
+### Global flags
+
+These flags must appear before the command name:
+
+| Flag | Function |
+| --- | --- |
+| `--config PATH` | Load a specific `config.toml` instead of the default path |
+| `--verbose` | Print more progress and process detail |
+| `--quiet` | Hide non-critical output |
+| `--help`, `-h` | Show top-level help |
+
+Examples:
 
 ```bash
-./build/oceandl providers
+oceandl --help
+oceandl --version
+oceandl --config ./config.toml datasets
+oceandl --verbose download oisst --start-year 2024 --end-year 2024
 ```
 
-List datasets:
+### Typical workflow
+
+Inspect what the tool knows about providers and datasets:
 
 ```bash
-./build/oceandl datasets
+oceandl providers
+oceandl datasets
+oceandl info oisst
+oceandl info gpcp
 ```
 
-Show dataset metadata:
+Download a per-year dataset:
 
 ```bash
-./build/oceandl info oisst
-./build/oceandl info gpcp
-./build/oceandl info air
-```
-
-Download the default dataset from config:
-
-```bash
-./build/oceandl download --start-year 2024 --end-year 2025
-```
-
-Download an explicit dataset:
-
-```bash
-./build/oceandl download oisst --start-year 2024 --end-year 2025 --output-dir data
+oceandl download oisst --start-year 2024 --end-year 2025
 ```
 
 Download a single-file dataset:
 
 ```bash
-./build/oceandl download gpcp
-./build/oceandl download air
+oceandl download gpcp
+oceandl download air
 ```
 
-The legacy alias is still supported:
+Use the default dataset from config instead of naming one on the command line:
 
 ```bash
-./build/oceandl download --dataset oisst --start-year 2024 --end-year 2025
+oceandl download --start-year 2024 --end-year 2025
 ```
 
-Force a re-download of a valid final file:
+Send output to a specific directory:
 
 ```bash
-./build/oceandl download oisst --start-year 2024 --end-year 2025 --overwrite
+oceandl download oisst --start-year 2024 --end-year 2025 --output-dir ./data
 ```
 
-Disable resume:
+Ask the tool for command-specific help:
 
 ```bash
-./build/oceandl download oisst --start-year 2024 --end-year 2025 --no-resume
+oceandl help download
+oceandl help info
 ```
 
-Set timeout, chunk size, and retry count:
+### Download command details
+
+Command form:
 
 ```bash
-./build/oceandl download \
-  oisst \
-  --start-year 2020 \
-  --end-year 2022 \
-  --timeout 90 \
-  --chunk-size 1048576 \
-  --retries 5
+oceandl download [dataset] [options]
+```
+
+Dataset selection:
+
+- Prefer the positional dataset argument: `oceandl download oisst ...`
+- The legacy alias `--dataset ID` is still supported: `oceandl download --dataset oisst ...`
+- If you omit the dataset entirely, `oceandl` uses `default_dataset` from the config file
+
+Dataset mode rules:
+
+- Per-year datasets such as `oisst` require both `--start-year` and `--end-year`
+- Single-file datasets such as `gpcp`, `air`, and `mslp` do not accept year flags
+
+Important download options:
+
+| Option | Function | Notes |
+| --- | --- | --- |
+| `--start-year YEAR` | Start year for a per-year dataset | Must be used together with `--end-year` |
+| `--end-year YEAR` | End year for a per-year dataset | Must be used together with `--start-year` |
+| `--output-dir PATH` | Override the output root for this run | Default comes from config |
+| `--overwrite` | Re-download a file even if the final file is already valid | Use when you want to replace an existing final file |
+| `--no-overwrite` | Force overwrite off for this run | Overrides config |
+| `--resume` | Allow resume from `.part` files | Enabled by default |
+| `--no-resume` | Disable partial resume and start clean | Useful for debugging or when you do not trust partial state |
+| `--timeout SECONDS` | Set HTTP request timeout | Must be finite and greater than zero |
+| `--chunk-size BYTES` | Set the requested `libcurl` receive buffer size | Minimum `1024`; default `1048576` |
+| `--retries N` | Retry transient failures | Allowed range `0..10` |
+| `--help`, `-h` | Show help for `download` | Does not start a download |
+
+Examples:
+
+```bash
+oceandl download oisst --start-year 2020 --end-year 2022
+oceandl download oisst --start-year 2024 --end-year 2025 --overwrite
+oceandl download oisst --start-year 2024 --end-year 2025 --no-resume
+oceandl download oisst --start-year 2020 --end-year 2022 --timeout 90 --chunk-size 1048576 --retries 5
+oceandl --quiet download gpcp
 ```
 
 `chunk_size` is used as the requested receive buffer size passed to `libcurl`.
 `retry_count` is bounded to `0..10` to keep retries predictable and avoid pathological retry loops.
-
-Output modes:
-
-```bash
-./build/oceandl --verbose download oisst --start-year 2024 --end-year 2024
-./build/oceandl --quiet download gpcp
-```
 
 ## Config file
 
