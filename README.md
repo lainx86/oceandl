@@ -51,99 +51,17 @@ Built-in datasets:
 - `hgt_pressure` - NCEP Reanalysis 2 Geopotential Height
 - `omega_pressure` - NCEP Reanalysis 2 Vertical Velocity
 
-## Support matrix
+## Install on Arch / AUR
 
-The table below describes the maintained path today.
+For most users, this is the install path you want.
 
-| Maintained path | CI coverage today | Recommended path | Notes |
-| --- | --- | --- | --- |
-| Arch Linux / Arch-based distributions | configure, build, `ctest`, CLI smoke, strict warnings, hermetic localhost HTTP integration, AUR `makepkg` verification | `yay -S oceandl` or source build from Arch packages | GitHub Actions runs these checks inside an Arch Linux container on a GitHub-hosted Linux runner because GitHub does not provide a managed Arch runner. |
-
-Other environments may still build from source, but they are not maintainer-gated support targets and should not be described as such in public docs or release notes.
-
-## Install dependencies
-
-Expected build dependencies:
-
-- CMake
-- C++20 compiler
-- `libcurl`
-- `fmt`
-- `tomlplusplus`
-- Python 3 if you want the full hermetic localhost integration test on Linux
-
-Maintained bootstrap example (Arch Linux / Arch-based):
-
-```bash
-sudo pacman -Syu --needed \
-  base-devel \
-  cmake \
-  ninja \
-  curl \
-  fmt \
-  tomlplusplus \
-  python
-```
-
-If you are building on another Linux distribution, install the equivalent development packages for `libcurl`, `fmt`, `tomlplusplus`, and optionally Python 3, then use the same source-build commands below. Those non-Arch paths are best-effort only.
-
-## Build from source
-
-Linux:
-
-```bash
-cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
-cmake --build build --parallel
-ctest --test-dir build --output-on-failure
-```
-
-Install the binary to a custom prefix:
-
-```bash
-cmake --install build --prefix /tmp/oceandl-install
-```
-
-Run the binary:
-
-```bash
-./build/oceandl --help
-./build/oceandl --version
-./build/oceandl datasets
-./build/oceandl info gpcp
-./build/oceandl download gpcp
-```
-
-## Package manager path
-
-The first official package-manager target is:
-
-- Arch `makepkg` / AUR-compatible source package
-
-Why this one first:
-
-- Linux is the most thoroughly exercised platform in CI today.
-- A single Arch source package is lower-maintenance than trying to support multiple package ecosystems at the same time.
-- The package can build from a formal source release asset with a published SHA-256 checksum.
-
-Authoritative files live in:
-
-- `packaging/arch/oceandl/PKGBUILD`
-- `packaging/arch/oceandl/.SRCINFO`
-
-Current status:
-
-- the package spec is maintained in this repository,
-- the release workflow now defines the formal source asset contract `oceandl-src-vX.Y.Z.tar.gz`,
-- GitHub Releases currently publish `oceandl-linux-x64.tar.gz` plus the source archive and `SHA256SUMS`,
-- the AUR package `oceandl` is published from that maintained package spec.
-
-Install from the published AUR package with an AUR helper:
+Install with an AUR helper:
 
 ```bash
 yay -S oceandl
 ```
 
-Or build it manually from the AUR package repo:
+Or install manually from the AUR package repo:
 
 ```bash
 git clone https://aur.archlinux.org/oceandl.git
@@ -151,7 +69,24 @@ cd oceandl
 makepkg -si
 ```
 
-For most Arch users, the AUR package is the default recommendation. Source build remains the fallback path for maintainers and local debugging.
+If your goal is simply to use the tool, you can stop there. You do not need to build `oceandl` manually from source first.
+
+## Quick start
+
+Typical first commands after install:
+
+```bash
+oceandl --help
+oceandl datasets
+oceandl info oisst
+oceandl download oisst --start-year 2024 --end-year 2024
+```
+
+That will typically create output under:
+
+```text
+~/data/oceandl/
+```
 
 ## Command-line usage
 
@@ -353,6 +288,89 @@ Notes:
     precip.mon.mean.nc
   air/
     air.mon.mean.nc
+```
+
+## Packaging and support notes
+
+### Maintained path today
+
+| Maintained path | CI coverage today | Recommended path | Notes |
+| --- | --- | --- | --- |
+| Arch Linux / Arch-based distributions | configure, build, `ctest`, CLI smoke, strict warnings, hermetic localhost HTTP integration, AUR `makepkg` verification | `yay -S oceandl` or the AUR package repo | GitHub Actions runs these checks inside an Arch Linux container on a GitHub-hosted Linux runner because GitHub does not provide a managed Arch runner. |
+
+Other environments may still build from source, but they are not maintainer-gated support targets and should not be described as such in public docs or release notes.
+
+### Package manager path
+
+The first official package-manager target is:
+
+- Arch `makepkg` / AUR-compatible source package
+
+Why this one first:
+
+- Linux is the most thoroughly exercised platform in CI today.
+- A single Arch source package is lower-maintenance than trying to support multiple package ecosystems at the same time.
+- The package can build from a formal source release asset with a published SHA-256 checksum.
+
+Authoritative files live in:
+
+- `packaging/arch/oceandl/PKGBUILD`
+- `packaging/arch/oceandl/.SRCINFO`
+
+Current status:
+
+- the package spec is maintained in this repository,
+- the release workflow defines the formal source asset contract `oceandl-src-vX.Y.Z.tar.gz`,
+- GitHub Releases currently publish `oceandl-linux-x64.tar.gz` plus the source archive and `SHA256SUMS`,
+- the AUR package `oceandl` is published from that maintained package spec.
+
+## Build from source
+
+If you only want to use `oceandl`, you can skip this section. This path is mainly for maintainers, local debugging, and packaging work.
+
+Expected build dependencies:
+
+- CMake
+- C++20 compiler
+- `libcurl`
+- `fmt`
+- `tomlplusplus`
+- Python 3 if you want the full hermetic localhost integration test on Linux
+
+Maintained bootstrap example (Arch Linux / Arch-based):
+
+```bash
+sudo pacman -Syu --needed \
+  base-devel \
+  cmake \
+  ninja \
+  curl \
+  fmt \
+  tomlplusplus \
+  python
+```
+
+Build and test:
+
+```bash
+cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+cmake --build build --parallel
+ctest --test-dir build --output-on-failure
+```
+
+Install the built binary to a custom prefix:
+
+```bash
+cmake --install build --prefix /tmp/oceandl-install
+```
+
+Run from the build tree:
+
+```bash
+./build/oceandl --help
+./build/oceandl datasets
+./build/oceandl info gpcp
+./build/oceandl download gpcp
 ```
 
 ## Source layout
