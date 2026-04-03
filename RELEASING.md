@@ -8,7 +8,7 @@ Keep public messaging aligned with the current project state:
 - the primary supported path is still source build on the CI-covered platforms,
 - GitHub Release archives are convenience artifacts for evaluation and early adopters, not a claim that `oceandl` is already a stable binary-first product,
 - the maintainer-owned release artifacts currently published by the workflow are Linux `x64` plus the formal source archive,
-- broad package-manager distribution is not published yet and should not be implied in release notes,
+- broader package-manager distribution beyond the maintainer-owned AUR package is not published yet and should not be implied in release notes,
 - the first maintainer-owned package-manager target is the Arch `makepkg` package spec in `packaging/arch/oceandl/`.
 
 ## Versioning policy

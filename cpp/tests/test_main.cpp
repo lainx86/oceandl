@@ -1,5 +1,4 @@
 #include <chrono>
-#include <cerrno>
 #include <curl/curl.h>
 #include <cstdlib>
 #include <filesystem>

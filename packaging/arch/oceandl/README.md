@@ -7,7 +7,7 @@ Current scope:
 
 - official first-stage target: Arch `makepkg` / AUR-compatible source package
 - authoritative package files live in this repository
-- external publication, such as an AUR repo, is a maintainer follow-up once tagged releases are flowing
+- the AUR package repo is now published at `aur.archlinux.org/packages/oceandl`
 
 The package builds from the formal source release asset:
 
@@ -15,7 +15,7 @@ The package builds from the formal source release asset:
 - asset URL: `https://github.com/lainx86/oceandl/releases/download/vX.Y.Z/oceandl-src-vX.Y.Z.tar.gz`
 - checksum source: the matching line in `SHA256SUMS`
 
-The checked-in `PKGBUILD` pins the expected SHA-256 for the current release candidate.
+The checked-in `PKGBUILD` pins the expected SHA-256 for the current published release.
 After each new tag, update that checksum from the published `SHA256SUMS`.
 
 ## Update process
@@ -30,11 +30,11 @@ cd packaging/arch/oceandl
 makepkg --printsrcinfo > .SRCINFO
 ```
 
-5. Verify the package spec against the staged source archive before publishing it externally:
+5. Verify the package spec against the public source archive before publishing or updating the AUR repo:
 
 ```bash
-./scripts/create_source_release.sh X.Y.Z dist/oceandl-src-vX.Y.Z.tar.gz
-./scripts/verify_arch_pkgbuild.sh dist/oceandl-src-vX.Y.Z.tar.gz packaging/arch/oceandl
+curl -L -O https://github.com/lainx86/oceandl/releases/download/vX.Y.Z/oceandl-src-vX.Y.Z.tar.gz
+./scripts/verify_arch_pkgbuild.sh oceandl-src-vX.Y.Z.tar.gz packaging/arch/oceandl
 ```
 
 ## Local verification override

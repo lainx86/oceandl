@@ -33,7 +33,6 @@ struct ConfigLoadResult {
 std::filesystem::path default_config_path();
 std::filesystem::path default_output_dir();
 std::map<std::string, std::string> default_provider_base_urls();
-std::map<std::string, std::string> default_dataset_base_urls();
 AppConfig default_app_config();
 ConfigLoadResult load_config_with_diagnostics(const std::filesystem::path& path);
 AppConfig load_config(const std::filesystem::path& path);

@@ -98,28 +98,30 @@ if(OCEANDL_ENABLE_RELEASE_BUNDLE)
     install(SCRIPT "${_oceandl_bundle_script}")
 endif()
 
-add_executable(oceandl_tests cpp/tests/test_main.cpp)
-target_link_libraries(oceandl_tests PRIVATE oceandl_lib)
-oceandl_apply_warnings(oceandl_tests)
+if(BUILD_TESTING)
+    add_executable(oceandl_tests cpp/tests/test_main.cpp)
+    target_link_libraries(oceandl_tests PRIVATE oceandl_lib)
+    oceandl_apply_warnings(oceandl_tests)
 
-add_test(NAME oceandl_tests COMMAND oceandl_tests)
+    add_test(NAME oceandl_tests COMMAND oceandl_tests)
 
-if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
-    find_package(Python3 COMPONENTS Interpreter QUIET)
-    if(Python3_Interpreter_FOUND)
-        add_test(
-            NAME oceandl_integration_http_local
-            COMMAND
-                "${Python3_EXECUTABLE}"
-                "${CMAKE_CURRENT_SOURCE_DIR}/cpp/tests/hermetic_http_integration.py"
-                --oceandl "$<TARGET_FILE:oceandl>"
-                --work-dir "${CMAKE_CURRENT_BINARY_DIR}/oceandl-http-integration"
-        )
-        set_tests_properties(
-            oceandl_integration_http_local
-            PROPERTIES
-                LABELS integration
-                TIMEOUT 60
-        )
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        find_package(Python3 COMPONENTS Interpreter QUIET)
+        if(Python3_Interpreter_FOUND)
+            add_test(
+                NAME oceandl_integration_http_local
+                COMMAND
+                    "${Python3_EXECUTABLE}"
+                    "${CMAKE_CURRENT_SOURCE_DIR}/cpp/tests/hermetic_http_integration.py"
+                    --oceandl "$<TARGET_FILE:oceandl>"
+                    --work-dir "${CMAKE_CURRENT_BINARY_DIR}/oceandl-http-integration"
+            )
+            set_tests_properties(
+                oceandl_integration_http_local
+                PROPERTIES
+                    LABELS integration
+                    TIMEOUT 60
+            )
+        endif()
     endif()
 endif()

@@ -27,26 +27,17 @@ tmp_output="$output_dir/.${output_name}.tmp"
 
 (
   cd "$repo_root"
-  tar \
-    --sort=name \
-    --mtime='UTC 1970-01-01' \
-    --owner=0 \
-    --group=0 \
-    --numeric-owner \
-    --exclude='./.git' \
-    --exclude='./.codex' \
-    --exclude='./build' \
-    --exclude='./build-*' \
-    --exclude='./dist' \
-    --exclude='./dist-*' \
-    --exclude='./dist-test' \
-    --exclude='./__cmake_systeminformation' \
-    --exclude='./*.pkg.tar' \
-    --exclude='./*.pkg.tar.*' \
-    --exclude='./*.tar.gz' \
-    --exclude='./*.zip' \
-    --transform "s,^\.,${prefix}," \
-    -cf - .
+  git ls-files -z \
+    | tar \
+      --null \
+      --files-from=- \
+      --sort=name \
+      --mtime='UTC 1970-01-01' \
+      --owner=0 \
+      --group=0 \
+      --numeric-owner \
+      --transform "s,^,${prefix}/," \
+      -cf -
 ) | gzip -n > "$tmp_output"
 
 mv "$tmp_output" "$output_path"

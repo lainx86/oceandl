@@ -71,7 +71,7 @@ partial
 
 - Menambahkan mode release bundling opsional di `CMakeLists.txt` lewat `OCEANDL_ENABLE_RELEASE_BUNDLE` dan `OCEANDL_EXTRA_BUNDLE_DIRS`.
 - Menambahkan script install-time bundling baru di `cmake/oceandl_install_bundle.cmake.in` yang memakai `BundleUtilities` untuk menyalin non-system runtime dependency ke install tree, serta `patchelf` di Linux untuk memberi `RPATH` `$ORIGIN` pada executable dan shared library hasil bundle.
-- Mengubah `.github/workflows/release.yml` agar release archive dibangun dari install tree (`cmake --install --prefix ...`) alih-alih hanya menyalin executable mentah. Workflow sekarang juga menjalankan smoke check dari hasil staging dan validasi dependency bundle pada Linux/Windows/macOS.
+- Mengubah `.github/workflows/release.yml` agar release archive dibangun dari install tree (`cmake --install --prefix ...`) alih-alih hanya menyalin executable mentah. Scope maintainer-owned public binary release kemudian dipersempit menjadi Linux `x64` saja agar jalur yang dipublish benar-benar yang dipelihara.
 - Memperbarui `RELEASING.md` agar checklist release menjelaskan layout install tree, bundling runtime library, dan requirement smoke test dari archive staging.
 - File yang diubah:
   - `CMakeLists.txt`
@@ -88,5 +88,5 @@ partial
   - `patchelf --print-rpath` pada executable dan library bundel menunjukkan `$ORIGIN`.
   - Archive Linux hasil staging berisi install tree lengkap (`bin/` + docs).
 - Sisa pekerjaan:
-  - Jalankan workflow release di GitHub Actions untuk memverifikasi jalur macOS dan Windows benar-benar berhasil pada runner aslinya.
+  - Jika maintainer ingin membuka kembali binary release untuk macOS atau Windows, policy packaging dan verifikasi artefaknya perlu didefinisikan ulang dengan workflow terpisah atau scope release yang lebih luas.
   - Review lagi daftar library Linux yang dibundel jika ingin memperkecil artefak tanpa mengorbankan sifat self-contained.

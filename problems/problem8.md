@@ -59,7 +59,7 @@ P2
 
 ## Status
 
-partial
+done
 
 ## Progress Notes
 
@@ -82,5 +82,7 @@ partial
   - `./scripts/verify_arch_pkgbuild.sh dist/oceandl-src-v0.2.0.tar.gz packaging/arch/oceandl`
   - `bash -n scripts/create_source_release.sh scripts/verify_arch_pkgbuild.sh`
   - `cd packaging/arch/oceandl && makepkg --printsrcinfo > .SRCINFO`
-- Sisa pekerjaan:
-  - repo saat ini belum memiliki git tag / GitHub Release publik yang cocok, jadi `PKGBUILD` belum bisa dipin ke checksum release yang benar-benar sudah dipublish. Karena itu status tetap `partial` sampai tagged release pertama dibuat dan checksum default `SKIP` diganti dengan SHA-256 dari `SHA256SUMS`.
+- Progress lanjutan:
+  - release publik `v0.2.4` sekarang sudah mem-publish `oceandl-src-v0.2.4.tar.gz`, `oceandl-linux-x64.tar.gz`, dan `SHA256SUMS`.
+  - `PKGBUILD` dan `.SRCINFO` sudah dipin ke checksum publik `oceandl-src-v0.2.4.tar.gz`.
+  - package `oceandl` sudah dipublish ke AUR dan tervalidasi lewat `yay`/`makepkg`.

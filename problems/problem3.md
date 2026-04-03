@@ -61,15 +61,14 @@ P1
 
 ## Status
 
-partial
+done
 
 ## Progress Notes
 
-- Menambahkan verifikasi archive final lintas platform di workflow release melalui job `verify-artifacts` yang mengunduh artifact hasil packaging, mengekstraknya, lalu menjalankan smoke command dari hasil ekstraksi.
+- Menambahkan verifikasi archive final di workflow release melalui job `verify-artifacts` yang mengunduh artifact hasil packaging Linux, mengekstraknya, lalu menjalankan smoke command dari hasil ekstraksi.
 - Menambahkan `SHA256SUMS` generation di job `publish` dan mempublikasikannya sebagai release asset bersama archive platform.
 - Menambahkan script reusable untuk verifikasi archive final:
   - `scripts/verify_release_archive.sh`
-  - `scripts/verify_release_archive.ps1`
 - Memperbarui `README.md` dan `RELEASING.md` agar checksum release, cara verifikasi, dan strategi signature terdokumentasi dengan jelas.
 - Strategi signature yang dipilih saat ini:
   - checksum SHA-256 menjadi baseline integrity mechanism
@@ -77,12 +76,12 @@ partial
 - File yang diubah:
   - `.github/workflows/release.yml`
   - `scripts/verify_release_archive.sh`
-  - `scripts/verify_release_archive.ps1`
   - `RELEASING.md`
   - `README.md`
 - Hasil verifikasi:
   - script verifikasi archive Linux berjalan sukses terhadap archive lokal hasil staging
   - checksum SHA-256 lokal berhasil dibuat dan diverifikasi ulang dengan `sha256sum -c`
-  - workflow YAML sudah diperbarui agar publish job gagal bila checksum generation gagal
-- Sisa pekerjaan:
-  - menjalankan workflow release nyata di GitHub Actions untuk memverifikasi jalur macOS dan Windows end-to-end
+  - workflow release `v0.2.4` berjalan sukses di GitHub Actions, mem-publish `oceandl-linux-x64.tar.gz`, `oceandl-src-v0.2.4.tar.gz`, dan `SHA256SUMS`
+  - publish job gagal bila checksum generation atau smoke test archive final gagal
+- Catatan lanjutan:
+  - detached signature tetap belum diaktifkan; checksum SHA-256 sengaja menjadi baseline sampai manajemen signing key siap.

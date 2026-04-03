@@ -182,12 +182,19 @@ Current status:
 - the package spec is maintained in this repository,
 - the release workflow now defines the formal source asset contract `oceandl-src-vX.Y.Z.tar.gz`,
 - GitHub Releases currently publish `oceandl-linux-x64.tar.gz` plus the source archive and `SHA256SUMS`,
-- external publication, such as a public AUR package, is still a maintainer follow-up after tagged releases are flowing.
+- the AUR package `oceandl` is published from that maintained package spec.
 
-Once a matching tagged release exists, the package can be built with:
+Install from the published AUR package with an AUR helper:
 
 ```bash
-cd packaging/arch/oceandl
+yay -S oceandl
+```
+
+Or build it manually from the AUR package repo:
+
+```bash
+git clone https://aur.archlinux.org/oceandl.git
+cd oceandl
 makepkg -si
 ```
 
@@ -389,8 +396,8 @@ sha256sum -c SHA256SUMS
 ```
 
 ```powershell
-$expected = (Select-String 'oceandl-windows-x64.zip' .\SHA256SUMS).ToString().Split(' ')[0]
-$actual = (Get-FileHash .\oceandl-windows-x64.zip -Algorithm SHA256).Hash.ToLower()
+$expected = (Select-String 'oceandl-linux-x64.tar.gz' .\SHA256SUMS).ToString().Split(' ')[0]
+$actual = (Get-FileHash .\oceandl-linux-x64.tar.gz -Algorithm SHA256).Hash.ToLower()
 if ($actual -ne $expected) { throw "checksum mismatch" }
 ```
 

@@ -14,6 +14,11 @@ cleanup() {
 }
 trap cleanup EXIT
 
+if [ "$(uname -s)" != "Linux" ]; then
+  echo "release archive verification is only maintained for Linux release artifacts." >&2
+  exit 2
+fi
+
 case "$archive_path" in
   *.tar.gz|*.tgz)
     tar -C "$extract_root" -xzf "$archive_path"
@@ -41,19 +46,7 @@ fi
 "$binary_path" providers >/dev/null
 "$binary_path" download --help >/dev/null
 
-case "$(uname -s)" in
-  Linux)
-    ldd "$binary_path"
-    ldd "$binary_path" | grep -F "$package_dir/bin/libcurl" >/dev/null
-    ldd "$binary_path" | grep -F "$package_dir/bin/libfmt" >/dev/null
-    ldd "$binary_path" | grep -F "$package_dir/bin/libtomlplusplus" >/dev/null
-    ;;
-  Darwin)
-    otool -L "$binary_path"
-    otool -L "$binary_path" | grep '@executable_path/../Frameworks/' >/dev/null
-    ;;
-  *)
-    echo "unsupported platform for release archive verification: $(uname -s)" >&2
-    exit 2
-    ;;
-esac
+ldd "$binary_path"
+ldd "$binary_path" | grep -F "$package_dir/bin/libcurl" >/dev/null
+ldd "$binary_path" | grep -F "$package_dir/bin/libfmt" >/dev/null
+ldd "$binary_path" | grep -F "$package_dir/bin/libtomlplusplus" >/dev/null

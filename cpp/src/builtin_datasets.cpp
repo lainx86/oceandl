@@ -146,17 +146,4 @@ std::map<std::string, std::string> builtin_provider_base_urls() {
     };
 }
 
-std::map<std::string, std::string> builtin_dataset_base_urls() {
-    const auto provider_base_urls = builtin_provider_base_urls();
-    std::map<std::string, std::string> urls;
-    for (const auto& spec : builtin_dataset_specs()) {
-        const auto provider_base_url = provider_base_urls.at(std::string(spec.provider_key));
-        urls.emplace(
-            std::string(spec.id),
-            provider_base_url + "/" + std::string(spec.default_path)
-        );
-    }
-    return urls;
-}
-
 }  // namespace oceandl

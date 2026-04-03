@@ -24,6 +24,5 @@ struct BuiltinDatasetSpec {
 
 const std::vector<BuiltinDatasetSpec>& builtin_dataset_specs();
 std::map<std::string, std::string> builtin_provider_base_urls();
-std::map<std::string, std::string> builtin_dataset_base_urls();
 
 }  // namespace oceandl
