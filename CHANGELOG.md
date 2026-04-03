@@ -6,6 +6,13 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 
 ## [Unreleased]
 
+## [0.2.3] - 2026-04-03
+
+### Fixed
+
+- macOS stale-lock recovery no longer relies on Linux-only `/proc`; it now inspects peer `oceandl` processes with `libproc`, which keeps Unix lock recovery behavior consistent across Linux and macOS.
+- Windows GitHub Actions jobs now reuse runner-provided `vcpkg` roots when present, bootstrap them when needed, and only fall back to a clean temporary clone when no usable install exists.
+
 ## [0.2.2] - 2026-04-03
 
 ### Fixed

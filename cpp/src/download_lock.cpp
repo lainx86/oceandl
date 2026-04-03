@@ -10,12 +10,17 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <vector>
 
 #ifndef _WIN32
 #include <fcntl.h>
 #include <signal.h>
 #include <sys/file.h>
 #include <unistd.h>
+#if defined(__APPLE__)
+#include <libproc.h>
+#include <mach-o/dyld.h>
+#endif
 #endif
 
 #include <fmt/format.h>
@@ -98,6 +103,19 @@ bool process_is_alive(int pid) {
 }
 
 std::optional<std::string> current_executable_basename() {
+#if defined(__APPLE__)
+    uint32_t size = 0;
+    (void)_NSGetExecutablePath(nullptr, &size);
+    if (size == 0) {
+        return std::nullopt;
+    }
+
+    std::vector<char> buffer(static_cast<std::size_t>(size) + 1, '\0');
+    if (_NSGetExecutablePath(buffer.data(), &size) != 0) {
+        return std::nullopt;
+    }
+    return std::filesystem::path(buffer.data()).filename().string();
+#else
     std::array<char, 4096> buffer{};
     const auto bytes = ::readlink("/proc/self/exe", buffer.data(), buffer.size() - 1);
     if (bytes <= 0) {
@@ -105,6 +123,7 @@ std::optional<std::string> current_executable_basename() {
     }
     buffer[static_cast<std::size_t>(bytes)] = '\0';
     return std::filesystem::path(buffer.data()).filename().string();
+#endif
 }
 
 bool has_running_peer_process() {
@@ -113,6 +132,58 @@ bool has_running_peer_process() {
         return true;
     }
 
+#if defined(__APPLE__)
+    std::vector<pid_t> pids(256, 0);
+    int bytes = 0;
+    while (true) {
+        bytes = ::proc_listpids(
+            PROC_ALL_PIDS,
+            0,
+            pids.data(),
+            static_cast<int>(pids.size() * sizeof(pid_t))
+        );
+        if (bytes < 0) {
+            return true;
+        }
+        if (bytes < static_cast<int>(pids.size() * sizeof(pid_t))) {
+            break;
+        }
+        pids.resize(pids.size() * 2, 0);
+    }
+
+    std::array<char, PROC_PIDPATHINFO_MAXSIZE> buffer{};
+    const auto pid_count = static_cast<std::size_t>(bytes) / sizeof(pid_t);
+    for (std::size_t index = 0; index < pid_count; ++index) {
+        const auto pid = pids[index];
+        if (
+            pid <= 0
+            || pid == static_cast<pid_t>(current_process_id())
+        ) {
+            continue;
+        }
+
+        buffer.fill('\0');
+        const auto path_bytes = ::proc_pidpath(
+            pid,
+            buffer.data(),
+            static_cast<uint32_t>(buffer.size())
+        );
+        if (path_bytes <= 0) {
+            continue;
+        }
+        if (static_cast<std::size_t>(path_bytes) < buffer.size()) {
+            buffer[static_cast<std::size_t>(path_bytes)] = '\0';
+        } else {
+            buffer.back() = '\0';
+        }
+
+        if (std::filesystem::path(buffer.data()).filename() == *executable_name) {
+            return true;
+        }
+    }
+
+    return false;
+#else
     std::error_code error;
     for (const auto& entry : std::filesystem::directory_iterator("/proc", error)) {
         if (error) {
@@ -145,6 +216,7 @@ bool has_running_peer_process() {
     }
 
     return false;
+#endif
 }
 
 void write_lock_owner_metadata(const std::filesystem::path& path) {
