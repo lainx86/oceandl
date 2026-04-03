@@ -41,9 +41,15 @@ else
   popd >/dev/null
 fi
 
-package_path=$(find "$work_dir/pkgbuild" -maxdepth 1 -type f -name '*.pkg.tar*' | head -n 1)
+package_path=$(
+  find "$work_dir/pkgbuild" -maxdepth 1 -type f \
+    -name 'oceandl-*.pkg.tar*' \
+    ! -name 'oceandl-debug-*.pkg.tar*' \
+    | sort \
+    | head -n 1
+)
 if [ -z "$package_path" ]; then
-  echo "makepkg did not produce a package archive" >&2
+  echo "makepkg did not produce a main oceandl package archive" >&2
   exit 1
 fi
 
