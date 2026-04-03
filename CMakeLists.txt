@@ -69,6 +69,9 @@ add_library(oceandl_lib
 
 target_include_directories(oceandl_lib PUBLIC cpp/include)
 target_link_libraries(oceandl_lib PUBLIC CURL::libcurl fmt::fmt tomlplusplus::tomlplusplus)
+if(WIN32)
+    target_compile_definitions(oceandl_lib PUBLIC NOMINMAX WIN32_LEAN_AND_MEAN)
+endif()
 oceandl_apply_warnings(oceandl_lib)
 
 add_executable(oceandl cpp/src/main.cpp)

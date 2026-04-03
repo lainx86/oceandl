@@ -13,8 +13,8 @@
 #include <vector>
 
 #ifdef _WIN32
-#include <tlhelp32.h>
 #include <windows.h>
+#include <tlhelp32.h>
 #else
 #include <fcntl.h>
 #include <signal.h>
