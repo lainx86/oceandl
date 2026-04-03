@@ -11,7 +11,7 @@ options=('!lto')
 
 _source_archive="oceandl-src-v${pkgver}.tar.gz"
 _source_url="${OCEANDL_SOURCE_URL:-https://github.com/lainx86/oceandl/releases/download/v${pkgver}/${_source_archive}}"
-_source_sha256="${OCEANDL_SOURCE_SHA256:-5f4aeca421ab700d3f6af56841fb68f7e51bd9025f89041fcdeca7aaee9fa789}"
+_source_sha256="${OCEANDL_SOURCE_SHA256:-e37626fbc5511577378d1f41243328395663cd2ffc9bb7fa0b6676eed1e6deba}"
 _source_root="oceandl-v${pkgver}"
 
 source=("${_source_archive}::${_source_url}")

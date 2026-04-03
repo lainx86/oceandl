@@ -12,6 +12,6 @@ pkgbase = oceandl
 	depends = tomlplusplus
 	options = !lto
 	source = oceandl-src-v0.2.4.tar.gz::https://github.com/lainx86/oceandl/releases/download/v0.2.4/oceandl-src-v0.2.4.tar.gz
-	sha256sums = 5f4aeca421ab700d3f6af56841fb68f7e51bd9025f89041fcdeca7aaee9fa789
+	sha256sums = e37626fbc5511577378d1f41243328395663cd2ffc9bb7fa0b6676eed1e6deba
 
 pkgname = oceandl
