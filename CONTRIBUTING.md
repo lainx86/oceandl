@@ -14,8 +14,9 @@ Requirements:
 - libcurl
 - fmt
 - tomlplusplus
+- for Windows source builds, a local `vcpkg` checkout plus the repo `vcpkg.json` manifest
 
-User-facing bootstrap commands for the maintained Arch Linux / AUR path live in `README.md`.
+User-facing bootstrap commands for the maintained Arch Linux / AUR path and the Windows manual-download path live in `README.md`.
 If you change supported platforms, dependency bootstrap, CI runner assumptions, or release positioning, update `README.md` and `RELEASING.md` in the same change so public docs stay aligned with reality.
 
 Build and test:
@@ -64,7 +65,7 @@ Security reports are currently triaged by Feby, with an acknowledgement target o
 
 - Prefer small, focused changes.
 - Keep failure modes explicit and actionable.
-- Preserve Linux behavior and keep the Arch/AUR path maintainable.
+- Preserve Linux behavior and keep the Arch/AUR path plus the Windows `x64` portable path maintainable.
 - Favor safe defaults over permissive behavior for download integrity.
 
 ## Commit and PR style

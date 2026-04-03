@@ -10,7 +10,7 @@ permissions:
   contents: write
 
 jobs:
-  build-artifacts:
+  build-linux-artifact:
     runs-on: ubuntu-latest
     container:
       image: archlinux:latest
@@ -48,7 +48,6 @@ jobs:
         run: ctest --test-dir build --output-on-failure
 
       - name: Pack artifact
-        shell: bash
         run: |
           package_dir="$PWD/dist/oceandl-linux-x64"
           archive="oceandl-linux-x64.tar.gz"
@@ -64,14 +63,104 @@ jobs:
           name: oceandl-linux-artifact
           path: oceandl-linux-x64.tar.gz
 
-  verify-artifacts:
-    needs: build-artifacts
+  build-windows-artifact:
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve vcpkg root
+        shell: pwsh
+        run: |
+          $candidateRoots = @()
+          if ($env:VCPKG_ROOT) {
+            $candidateRoots += $env:VCPKG_ROOT
+          }
+          if ($env:VCPKG_INSTALLATION_ROOT) {
+            $candidateRoots += $env:VCPKG_INSTALLATION_ROOT
+          }
+          $candidateRoots += @(
+            "C:\vcpkg"
+          )
+
+          $vcpkgRoot = $null
+          foreach ($candidate in $candidateRoots) {
+            if (-not $candidate) {
+              continue
+            }
+            if (
+              (Test-Path (Join-Path $candidate "vcpkg.exe")) -or
+              (Test-Path (Join-Path $candidate "bootstrap-vcpkg.bat"))
+            ) {
+              $vcpkgRoot = $candidate
+              break
+            }
+          }
+
+          if (-not $vcpkgRoot) {
+            $vcpkgRoot = Join-Path $env:RUNNER_TEMP "vcpkg"
+            if (Test-Path $vcpkgRoot) {
+              Remove-Item -Recurse -Force $vcpkgRoot
+            }
+            git clone --depth 1 https://github.com/microsoft/vcpkg.git "$vcpkgRoot"
+          }
+
+          if (-not (Test-Path (Join-Path $vcpkgRoot "vcpkg.exe"))) {
+            & "$vcpkgRoot\bootstrap-vcpkg.bat" -disableMetrics
+          }
+
+          "VCPKG_ROOT=$vcpkgRoot" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "VCPKG_INSTALLATION_ROOT=$vcpkgRoot" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Configure
+        shell: pwsh
+        run: |
+          if (-not $env:VCPKG_ROOT) {
+            throw "VCPKG_ROOT is not set."
+          }
+          $bundleDir = Join-Path $PWD "vcpkg_installed/x64-windows/bin"
+          cmake -S . -B build -G "Visual Studio 17 2022" -A x64 `
+            -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_ROOT\scripts\buildsystems\vcpkg.cmake" `
+            -DVCPKG_TARGET_TRIPLET=x64-windows `
+            -DOCEANDL_ENABLE_RELEASE_BUNDLE=ON `
+            -DOCEANDL_EXTRA_BUNDLE_DIRS="$bundleDir"
+
+      - name: Build
+        shell: pwsh
+        run: cmake --build build --config Release --parallel
+
+      - name: Test
+        shell: pwsh
+        run: ctest --test-dir build --build-config Release --output-on-failure
+
+      - name: Pack artifact
+        shell: pwsh
+        run: |
+          $packageDir = Join-Path $PWD "dist\oceandl-windows-x64"
+          $archivePath = Join-Path $PWD "oceandl-windows-x64.zip"
+
+          Remove-Item -Recurse -Force $packageDir -ErrorAction SilentlyContinue
+          Remove-Item -Force $archivePath -ErrorAction SilentlyContinue
+          New-Item -ItemType Directory -Force -Path (Join-Path $PWD "dist") | Out-Null
+
+          cmake --install build --config Release --prefix $packageDir
+          Compress-Archive -Path $packageDir -DestinationPath $archivePath -Force
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: oceandl-windows-artifact
+          path: oceandl-windows-x64.zip
+
+  verify-linux-artifact:
+    needs: build-linux-artifact
     runs-on: ubuntu-latest
     container:
       image: archlinux:latest
     defaults:
       run:
         shell: bash
+
     steps:
       - name: Install dependencies
         run: |
@@ -89,46 +178,53 @@ jobs:
           path: verify-assets
 
       - name: Smoke test final archive
-        shell: bash
         run: |
           bash ./scripts/verify_release_archive.sh "verify-assets/oceandl-linux-x64.tar.gz"
 
+  verify-windows-artifact:
+    needs: build-windows-artifact
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download packaged artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: oceandl-windows-artifact
+          path: verify-assets
+
+      - name: Smoke test final archive
+        shell: pwsh
+        run: |
+          .\scripts\verify_release_archive.ps1 -ArchivePath "verify-assets\oceandl-windows-x64.zip"
+
   publish:
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: verify-artifacts
+    needs:
+      - verify-linux-artifact
+      - verify-windows-artifact
     runs-on: ubuntu-latest
-    container:
-      image: archlinux:latest
-    defaults:
-      run:
-        shell: bash
-    steps:
-      - name: Install dependencies
-        run: |
-          pacman -Syu --noconfirm --needed archlinux-keyring
-          pacman -S --noconfirm --needed \
-            base-devel \
-            git
 
+    steps:
       - uses: actions/checkout@v4
 
       - name: Download packaged artifacts
         uses: actions/download-artifact@v4
         with:
           path: release-assets
-          name: oceandl-linux-artifact
+          pattern: oceandl-*-artifact
+          merge-multiple: true
 
       - name: Create formal source release archive
-        shell: bash
         run: |
           version="${GITHUB_REF_NAME#v}"
           bash ./scripts/create_source_release.sh "$version" "release-assets/oceandl-src-v${version}.tar.gz"
 
       - name: Generate release checksums
-        shell: bash
         run: |
           cd release-assets
-          sha256sum oceandl-*.tar.gz > SHA256SUMS
+          sha256sum oceandl-*.tar.gz oceandl-*.zip > SHA256SUMS
           sha256sum -c SHA256SUMS
 
       - name: Publish GitHub Release assets
@@ -136,4 +232,5 @@ jobs:
         with:
           files: |
             release-assets/oceandl-*.tar.gz
+            release-assets/oceandl-*.zip
             release-assets/SHA256SUMS

@@ -12,10 +12,11 @@
 
 What that means in practice:
 
-- The recommended installation path today is Arch Linux via AUR, or source build on an Arch-based system.
+- The recommended installation path today is Arch Linux via AUR on Arch-based systems, or the Windows `x64` portable archive from GitHub Releases on Windows.
 - GitHub Releases may publish CI-built archives for convenience, but they are still alpha artifacts, not a promise of "stable binary-first" support.
-- Today that public release path is intentionally narrow: the formal source archive used by AUR, plus a maintainer-built Linux `x64` convenience archive.
+- Today that public release path is intentionally narrow: the formal source archive used by AUR, plus maintainer-built Linux `x64` and Windows `x64` portable archives.
 - The only first-stage package-manager target maintained in this repository today is the Arch `makepkg` package spec described below.
+- Winget is intentionally not published yet; Windows starts with manual download from GitHub Releases first.
 - Other operating systems and package ecosystems are not maintainer-owned targets right now.
 - Backward compatibility and platform support should be treated as improving, not frozen.
 
@@ -26,7 +27,7 @@ What that means in practice:
 - Simple provider abstraction, currently with one built-in provider: NOAA PSL
 - `per_year` and `single_file` dataset downloads
 - Default dataset `oisst`
-- Platform-aware default output root (`~/data/oceandl` on Linux)
+- Platform-aware default output root (`~/data/oceandl` on Linux, `%LOCALAPPDATA%\\oceandl\\data` on Windows)
 - `oceandl --version`, `providers`, `datasets`, `info`, and `download`
 - `oceandl --help` and `<command> --help`
 - Resume from `.part` files when the server supports `Range`
@@ -53,7 +54,7 @@ Built-in datasets:
 
 ## Install on Arch / AUR
 
-For most users, this is the install path you want.
+For Arch users, this is the default install path.
 
 Install with an AUR helper:
 
@@ -70,6 +71,37 @@ makepkg -si
 ```
 
 If your goal is simply to use the tool, you can stop there. You do not need to build `oceandl` manually from source first.
+
+## Install on Windows from GitHub Releases
+
+Windows support target for end users is currently:
+
+- `x64`
+- portable zip archive
+- manual download from GitHub Releases
+- not Winget yet
+
+Download `oceandl-windows-x64.zip` from the latest GitHub Release, then extract it somewhere stable such as:
+
+```text
+%LOCALAPPDATA%\Programs\oceandl
+```
+
+Run it directly:
+
+```powershell
+.\oceandl-windows-x64\bin\oceandl.exe --help
+.\oceandl-windows-x64\bin\oceandl.exe datasets
+```
+
+Optional: add the extracted `bin\` directory to `PATH`, then you can run:
+
+```powershell
+oceandl.exe --help
+oceandl.exe download --help
+```
+
+If your goal is simply to use the tool, you do not need Visual Studio, CMake, or a manual source build.
 
 ## Quick start
 
@@ -88,10 +120,17 @@ That will typically create output under:
 ~/data/oceandl/
 ```
 
+On Windows, the equivalent default data root is:
+
+```text
+%LOCALAPPDATA%\oceandl\data
+```
+
 ## Command-line usage
 
-Examples below assume `oceandl` is already on your `PATH` because you installed it from AUR.
-If you are running from the build tree instead, replace `oceandl` with `./build/oceandl`.
+Examples below assume `oceandl` or `oceandl.exe` is already on your `PATH`.
+On Windows portable releases, either run `bin\\oceandl.exe` directly or add `bin\\` to `PATH`.
+If you are running from the build tree instead, replace `oceandl` with `./build/oceandl` on Linux or `.\build\Release\oceandl.exe` on Windows.
 
 ### Command reference
 
@@ -221,7 +260,15 @@ oceandl --quiet download gpcp
 Default locations:
 
 ```text
+Windows : %APPDATA%\oceandl\config.toml
 Linux   : ~/.config/oceandl/config.toml
+```
+
+Default data/output directory:
+
+```text
+Windows : %LOCALAPPDATA%\oceandl\data
+Linux   : ~/data/oceandl
 ```
 
 Example:
@@ -277,6 +324,12 @@ Notes:
   Reduce `retry_count` in CLI flags or `config.toml`.
 - `target is already being used by another process`:
   Another `oceandl` process is downloading the same target, or a stale lock still needs recovery; wait for the active process to finish and rerun the command.
+- `The code execution cannot proceed because <name>.dll was not found`:
+  Make sure you extracted the full `oceandl-windows-x64.zip` archive and kept the bundled DLLs next to `oceandl.exe` under `bin\`.
+- `Windows protected your PC`:
+  This is SmartScreen. Verify the file came from the expected GitHub Release, check `SHA256SUMS`, then use the normal Windows trust flow if you want to run it.
+- `'oceandl' is not recognized as an internal or external command`:
+  Run `oceandl.exe` from the extracted `bin\` directory directly, or add that directory to `PATH`.
 
 ## Output layout
 
@@ -297,6 +350,7 @@ Notes:
 | Maintained path | CI coverage today | Recommended path | Notes |
 | --- | --- | --- | --- |
 | Arch Linux / Arch-based distributions | configure, build, `ctest`, CLI smoke, strict warnings, hermetic localhost HTTP integration, AUR `makepkg` verification | `yay -S oceandl` or the AUR package repo | GitHub Actions runs these checks inside an Arch Linux container on a GitHub-hosted Linux runner because GitHub does not provide a managed Arch runner. |
+| Windows `x64` portable release path | configure, build, `ctest`, CLI smoke, portable release archive verification | download `oceandl-windows-x64.zip` from GitHub Releases | Current Windows target is manual-download portable `x64` only. Winget is intentionally not published yet. |
 
 Other environments may still build from source, but they are not maintainer-gated support targets and should not be described as such in public docs or release notes.
 
@@ -321,8 +375,13 @@ Current status:
 
 - the package spec is maintained in this repository,
 - the release workflow defines the formal source asset contract `oceandl-src-vX.Y.Z.tar.gz`,
-- GitHub Releases currently publish `oceandl-linux-x64.tar.gz` plus the source archive and `SHA256SUMS`,
+- GitHub Releases currently publish `oceandl-linux-x64.tar.gz`, `oceandl-windows-x64.zip`, the source archive, and `SHA256SUMS`,
 - the AUR package `oceandl` is published from that maintained package spec.
+
+Windows note:
+
+- manual GitHub Release download is the intended Windows distribution path for now,
+- Winget is deferred until the portable Windows release path has stayed stable across multiple releases.
 
 ## Build from source
 
@@ -336,6 +395,7 @@ Expected build dependencies:
 - `fmt`
 - `tomlplusplus`
 - Python 3 if you want the full hermetic localhost integration test on Linux
+- for Windows source builds, a local `vcpkg` checkout plus the repo `vcpkg.json` manifest
 
 Maintained bootstrap example (Arch Linux / Arch-based):
 
@@ -350,7 +410,27 @@ sudo pacman -Syu --needed \
   python
 ```
 
-Build and test:
+Windows source-build prerequisites:
+
+- Visual Studio 2022 or Build Tools 2022 with MSVC `x64`
+- a local `vcpkg` checkout
+
+Windows configure/build/test example:
+
+```powershell
+$env:VCPKG_ROOT = "C:\src\vcpkg"
+if (-not (Test-Path "$env:VCPKG_ROOT\vcpkg.exe")) {
+  & "$env:VCPKG_ROOT\bootstrap-vcpkg.bat" -disableMetrics
+}
+
+cmake -S . -B build -G "Visual Studio 17 2022" -A x64 `
+  -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_ROOT\scripts\buildsystems\vcpkg.cmake" `
+  -DVCPKG_TARGET_TRIPLET=x64-windows
+cmake --build build --config Release --parallel
+ctest --test-dir build --build-config Release --output-on-failure
+```
+
+Linux build and test:
 
 ```bash
 cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
@@ -358,7 +438,7 @@ cmake --build build --parallel
 ctest --test-dir build --output-on-failure
 ```
 
-Install the built binary to a custom prefix:
+Linux install example:
 
 ```bash
 cmake --install build --prefix /tmp/oceandl-install
@@ -371,6 +451,15 @@ Run from the build tree:
 ./build/oceandl datasets
 ./build/oceandl info gpcp
 ./build/oceandl download gpcp
+```
+
+Windows run-from-build-tree example:
+
+```powershell
+.\build\Release\oceandl.exe --help
+.\build\Release\oceandl.exe datasets
+.\build\Release\oceandl.exe info gpcp
+.\build\Release\oceandl.exe download gpcp
 ```
 
 ## Source layout
@@ -395,14 +484,17 @@ Run from the build tree:
 ## Release and distribution
 
 - Public release posture remains alpha and source-first.
-- CI builds and tests the maintained path inside an Arch Linux container on a GitHub-hosted Linux runner.
-- Tagging `v*` triggers the release workflow that builds the Linux release archive, smoke-tests the extracted artifact, and uploads it to GitHub Releases.
-- Produced artifacts currently include `oceandl-linux-x64.tar.gz`, the formal source archive `oceandl-src-vX.Y.Z.tar.gz`, and a `SHA256SUMS` file for integrity verification.
+- Linux CI builds and tests the maintained Arch path inside an Arch Linux container on a GitHub-hosted Linux runner.
+- Windows CI builds and tests the maintained Windows `x64` path on `windows-latest`.
+- Tagging `v*` triggers the release workflow that builds the Linux and Windows release archives, smoke-tests the extracted artifacts, and uploads them to GitHub Releases.
+- Produced artifacts currently include `oceandl-linux-x64.tar.gz`, `oceandl-windows-x64.zip`, the formal source archive `oceandl-src-vX.Y.Z.tar.gz`, and a `SHA256SUMS` file for integrity verification.
 - Current recommendation:
-  - prefer the source-build path above for the most predictable setup,
-  - treat GitHub Release archives as convenience artifacts for the currently published Linux release path,
+  - prefer AUR on Arch-based systems,
+  - prefer the Windows portable release zip on Windows,
+  - treat GitHub Release archives as convenience artifacts for the currently published Linux and Windows release paths,
   - treat the in-repo Arch `makepkg` package spec as the first official package-manager target,
   - do not treat the project as a stable binary-first or broad package-manager distribution yet.
+- Winget is intentionally not published yet; the prerequisite is a stable Windows portable release path first.
 - Detached release signatures are not published yet; SHA-256 checksums are the current baseline until maintainer-managed signing keys are in place.
 
 Checksum verification examples:

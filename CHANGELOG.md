@@ -6,6 +6,16 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 
 ## [Unreleased]
 
+### Added
+
+- `windows-latest` CI coverage for configure, build, `ctest`, and basic CLI smoke checks using MSVC with `vcpkg`.
+- Windows release artifact packaging and verification for the portable `oceandl-windows-x64.zip` GitHub Release path.
+
+### Changed
+
+- Lock owner metadata is now written on Windows too, so stale lock recovery and lock-conflict handling no longer rely on weaker Windows-only heuristics.
+- User-facing and maintainer docs now describe the Windows `x64` portable release path and the prerequisites that remain before a future Winget rollout.
+
 ## [0.2.5] - 2026-04-03
 
 ### Changed

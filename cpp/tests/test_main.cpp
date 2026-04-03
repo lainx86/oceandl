@@ -12,7 +12,9 @@
 #include <utility>
 #include <vector>
 
-#ifndef _WIN32
+#ifdef _WIN32
+#include <windows.h>
+#else
 #include <unistd.h>
 #endif
 
@@ -34,6 +36,47 @@
 using namespace oceandl;
 
 namespace {
+
+int current_process_id_for_test() {
+#ifdef _WIN32
+    return static_cast<int>(::GetCurrentProcessId());
+#else
+    return static_cast<int>(::getpid());
+#endif
+}
+
+class ScopedEnvVar {
+  public:
+    ScopedEnvVar(const char* name, std::optional<std::string> value) : name_(name) {
+        if (const char* current = std::getenv(name_.c_str())) {
+            old_value_ = std::string(current);
+        }
+        set(value);
+    }
+
+    ~ScopedEnvVar() {
+        set(old_value_);
+    }
+
+    ScopedEnvVar(const ScopedEnvVar&) = delete;
+    ScopedEnvVar& operator=(const ScopedEnvVar&) = delete;
+
+  private:
+    void set(const std::optional<std::string>& value) {
+#ifdef _WIN32
+        (void)_putenv_s(name_.c_str(), value.value_or("").c_str());
+#else
+        if (value.has_value()) {
+            (void)::setenv(name_.c_str(), value->c_str(), 1);
+        } else {
+            (void)::unsetenv(name_.c_str());
+        }
+#endif
+    }
+
+    std::string name_;
+    std::optional<std::string> old_value_;
+};
 
 class TempDir {
   public:
@@ -66,16 +109,14 @@ class ScopedTargetLock {
             throw std::runtime_error("failed to acquire test lock directory");
         }
 
-#ifndef _WIN32
         std::ofstream owner(lock_path_ / "owner", std::ios::binary | std::ios::trunc);
         if (!owner) {
             throw std::runtime_error("failed to open test lock metadata");
         }
-        owner << "pid " << static_cast<long long>(::getpid()) << "\n";
+        owner << "pid " << static_cast<long long>(current_process_id_for_test()) << "\n";
         if (!owner) {
             throw std::runtime_error("failed to write test lock metadata");
         }
-#endif
     }
 
     ~ScopedTargetLock() {
@@ -1025,6 +1066,47 @@ bool test_safe_replace_file_restores_existing_output_on_failure() {
         && expect(!std::filesystem::exists(backup), "backup removed after replace rollback");
 }
 
+bool test_default_config_path_matches_platform_conventions() {
+#ifdef _WIN32
+    ScopedEnvVar app_data("APPDATA", std::string("C:/Fixture/AppData/Roaming"));
+    ScopedEnvVar local_app_data("LOCALAPPDATA", std::string("C:/Fixture/AppData/Local"));
+
+    return expect(
+        default_config_path()
+            == std::filesystem::path("C:/Fixture/AppData/Roaming") / "oceandl" / "config.toml",
+        "windows default config path prefers APPDATA"
+    );
+#else
+    ScopedEnvVar home("HOME", std::string("/tmp/oceandl-home"));
+    ScopedEnvVar xdg_config_home("XDG_CONFIG_HOME", std::nullopt);
+    return expect(
+        default_config_path()
+            == std::filesystem::path("/tmp/oceandl-home/.config/oceandl/config.toml"),
+        "linux default config path uses XDG fallback"
+    );
+#endif
+}
+
+bool test_default_output_dir_matches_platform_conventions() {
+#ifdef _WIN32
+    ScopedEnvVar app_data("APPDATA", std::string("C:/Fixture/AppData/Roaming"));
+    ScopedEnvVar local_app_data("LOCALAPPDATA", std::string("C:/Fixture/AppData/Local"));
+
+    return expect(
+        default_output_dir()
+            == std::filesystem::path("C:/Fixture/AppData/Local") / "oceandl" / "data",
+        "windows default output dir prefers LOCALAPPDATA"
+    );
+#else
+    ScopedEnvVar home("HOME", std::string("/tmp/oceandl-home"));
+    ScopedEnvVar xdg_data_home("XDG_DATA_HOME", std::nullopt);
+    return expect(
+        default_output_dir() == std::filesystem::path("/tmp/oceandl-home/data/oceandl"),
+        "linux default output dir uses home data directory"
+    );
+#endif
+}
+
 bool test_downloader_retries_transient_network_error() {
     TempDir temp_dir;
     auto dataset = fixture_dataset();
@@ -1763,6 +1845,8 @@ int main() {
         {"downloader_recovers_legacy_lock_file_without_peer_process", test_downloader_recovers_legacy_lock_file_without_peer_process},
 #endif
         {"safe_replace_file_restores_existing_output_on_failure", test_safe_replace_file_restores_existing_output_on_failure},
+        {"default_config_path_matches_platform_conventions", test_default_config_path_matches_platform_conventions},
+        {"default_output_dir_matches_platform_conventions", test_default_output_dir_matches_platform_conventions},
         {"downloader_retries_transient_network_error", test_downloader_retries_transient_network_error},
         {"downloader_retries_http_503_without_corrupting_partial", test_downloader_retries_http_503_without_corrupting_partial},
         {"downloader_rejects_download_without_verifiable_size", test_downloader_rejects_download_without_verifiable_size},

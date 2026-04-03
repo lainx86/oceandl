@@ -80,6 +80,79 @@ jobs:
           ./build/oceandl providers
           ./build/oceandl download --help
 
+  windows-build-test:
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve vcpkg root
+        shell: pwsh
+        run: |
+          $candidateRoots = @()
+          if ($env:VCPKG_ROOT) {
+            $candidateRoots += $env:VCPKG_ROOT
+          }
+          if ($env:VCPKG_INSTALLATION_ROOT) {
+            $candidateRoots += $env:VCPKG_INSTALLATION_ROOT
+          }
+          $candidateRoots += @(
+            "C:\vcpkg"
+          )
+
+          $vcpkgRoot = $null
+          foreach ($candidate in $candidateRoots) {
+            if (-not $candidate) {
+              continue
+            }
+            if (
+              (Test-Path (Join-Path $candidate "vcpkg.exe")) -or
+              (Test-Path (Join-Path $candidate "bootstrap-vcpkg.bat"))
+            ) {
+              $vcpkgRoot = $candidate
+              break
+            }
+          }
+
+          if (-not $vcpkgRoot) {
+            $vcpkgRoot = Join-Path $env:RUNNER_TEMP "vcpkg"
+            if (Test-Path $vcpkgRoot) {
+              Remove-Item -Recurse -Force $vcpkgRoot
+            }
+            git clone --depth 1 https://github.com/microsoft/vcpkg.git "$vcpkgRoot"
+          }
+
+          if (-not (Test-Path (Join-Path $vcpkgRoot "vcpkg.exe"))) {
+            & "$vcpkgRoot\bootstrap-vcpkg.bat" -disableMetrics
+          }
+
+          "VCPKG_ROOT=$vcpkgRoot" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "VCPKG_INSTALLATION_ROOT=$vcpkgRoot" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Configure
+        shell: pwsh
+        run: >
+          if (-not $env:VCPKG_ROOT) { throw "VCPKG_ROOT is not set." };
+          cmake -S . -B build -G "Visual Studio 17 2022" -A x64
+          -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_ROOT\scripts\buildsystems\vcpkg.cmake"
+          -DVCPKG_TARGET_TRIPLET=x64-windows
+
+      - name: Build
+        shell: pwsh
+        run: cmake --build build --config Release --parallel
+
+      - name: Run tests
+        shell: pwsh
+        run: ctest --test-dir build --build-config Release --output-on-failure
+
+      - name: CLI smoke test
+        shell: pwsh
+        run: |
+          .\build\Release\oceandl.exe --version
+          .\build\Release\oceandl.exe datasets
+          .\build\Release\oceandl.exe providers
+          .\build\Release\oceandl.exe download --help
+
   aur-package:
     runs-on: ubuntu-latest
     container:

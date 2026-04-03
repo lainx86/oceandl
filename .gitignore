@@ -5,6 +5,8 @@
 /dist-*
 /.codex
 /__cmake_systeminformation/
+/vcpkg_installed/
+/.vs/
 /problems/
 /.pytest_cache
 /__pycache__

@@ -12,7 +12,10 @@
 #include <string_view>
 #include <vector>
 
-#ifndef _WIN32
+#ifdef _WIN32
+#include <tlhelp32.h>
+#include <windows.h>
+#else
 #include <fcntl.h>
 #include <signal.h>
 #include <sys/file.h>
@@ -87,23 +90,57 @@ bool path_was_touched_recently(
     return last_write + grace >= std::filesystem::file_time_type::clock::now();
 }
 
-#ifndef _WIN32
 int current_process_id() {
+#ifdef _WIN32
+    return static_cast<int>(::GetCurrentProcessId());
+#else
     return static_cast<int>(::getpid());
+#endif
 }
 
 bool process_is_alive(int pid) {
     if (pid <= 0) {
         return false;
     }
+#ifdef _WIN32
+    HANDLE process =
+        ::OpenProcess(SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION, FALSE, static_cast<DWORD>(pid));
+    if (process == nullptr) {
+        return false;
+    }
+
+    const auto wait_result = ::WaitForSingleObject(process, 0);
+    ::CloseHandle(process);
+    return wait_result == WAIT_TIMEOUT;
+#else
     if (::kill(static_cast<pid_t>(pid), 0) == 0) {
         return true;
     }
     return errno == EPERM;
+#endif
 }
 
 std::optional<std::string> current_executable_basename() {
-#if defined(__APPLE__)
+#ifdef _WIN32
+    std::vector<wchar_t> buffer(MAX_PATH, L'\0');
+    while (true) {
+        const auto copied = ::GetModuleFileNameW(
+            nullptr,
+            buffer.data(),
+            static_cast<DWORD>(buffer.size())
+        );
+        if (copied == 0) {
+            return std::nullopt;
+        }
+        if (copied < buffer.size() - 1) {
+            return std::filesystem::path(buffer.data()).filename().string();
+        }
+        buffer.resize(buffer.size() * 2, L'\0');
+        if (buffer.size() > 32768) {
+            return std::nullopt;
+        }
+    }
+#elif defined(__APPLE__)
     uint32_t size = 0;
     (void)_NSGetExecutablePath(nullptr, &size);
     if (size == 0) {
@@ -132,7 +169,35 @@ bool has_running_peer_process() {
         return true;
     }
 
-#if defined(__APPLE__)
+#ifdef _WIN32
+    HANDLE snapshot = ::CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+    if (snapshot == INVALID_HANDLE_VALUE) {
+        return true;
+    }
+
+    PROCESSENTRY32W entry{};
+    entry.dwSize = sizeof(entry);
+    if (!::Process32FirstW(snapshot, &entry)) {
+        ::CloseHandle(snapshot);
+        return true;
+    }
+
+    const auto normalized_name = to_lower(*executable_name);
+    const auto current_pid = static_cast<DWORD>(current_process_id());
+    do {
+        if (entry.th32ProcessID == 0 || entry.th32ProcessID == current_pid) {
+            continue;
+        }
+
+        if (to_lower(std::filesystem::path(entry.szExeFile).filename().string()) == normalized_name) {
+            ::CloseHandle(snapshot);
+            return true;
+        }
+    } while (::Process32NextW(snapshot, &entry));
+
+    ::CloseHandle(snapshot);
+    return false;
+#elif defined(__APPLE__)
     std::vector<pid_t> pids(256, 0);
     int bytes = 0;
     while (true) {
@@ -229,7 +294,6 @@ void write_lock_owner_metadata(const std::filesystem::path& path) {
         throw std::runtime_error("failed to write lock metadata.");
     }
 }
-#endif
 
 std::filesystem::path lock_owner_path(const std::filesystem::path& lock_path) {
     return lock_path / "owner";
@@ -243,11 +307,9 @@ void recover_existing_lock_directory(const DownloadTarget& target, const Reporte
     }
 
     const auto owner_pid = load_lock_owner_pid(lock_owner_path(lock_path));
-#ifndef _WIN32
     if (owner_pid.has_value() && process_is_alive(*owner_pid)) {
         throw DownloadLockError(lock_conflict_message(target, owner_pid));
     }
-#endif
 
     const bool looks_recent =
         path_was_touched_recently(lock_path, kLegacyLockGracePeriod)
@@ -255,9 +317,7 @@ void recover_existing_lock_directory(const DownloadTarget& target, const Reporte
         || path_was_touched_recently(target.temp_metadata_path(), kLegacyLockGracePeriod);
     if (
         !owner_pid.has_value() && looks_recent
-#ifndef _WIN32
         && has_running_peer_process()
-#endif
     ) {
         throw DownloadLockError(lock_conflict_message(target));
     }
@@ -337,7 +397,6 @@ TargetFileLock::TargetFileLock(const DownloadTarget& target, const Reporter& rep
         throw DownloadLockError(lock_conflict_message(target));
     }
 
-#ifndef _WIN32
     try {
         write_lock_owner_metadata(lock_owner_path(lock_path_));
     } catch (...) {
@@ -345,7 +404,6 @@ TargetFileLock::TargetFileLock(const DownloadTarget& target, const Reporter& rep
         std::filesystem::remove_all(lock_path_, cleanup_error);
         throw;
     }
-#endif
     acquired_ = true;
 }
 

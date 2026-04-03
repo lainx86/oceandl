@@ -5,11 +5,13 @@
 Keep public messaging aligned with the current project state:
 
 - releases are still alpha,
-- the primary supported path is Arch Linux via AUR, with source build on Arch-based systems as the maintainer-owned fallback,
+- the primary supported end-user paths are Arch Linux via AUR and the Windows `x64` portable archive from GitHub Releases,
+- source build on the maintained paths remains the maintainer-owned fallback,
 - GitHub Release archives are convenience artifacts for evaluation and early adopters, not a claim that `oceandl` is already a stable binary-first product,
-- the maintainer-owned release workflow runs inside an Arch Linux container on a GitHub-hosted Linux runner because GitHub does not provide a managed Arch runner,
-- the maintainer-owned release artifacts currently published by the workflow are Linux `x64` plus the formal source archive,
+- the maintainer-owned release workflow builds Linux in an Arch Linux container on a GitHub-hosted Linux runner and builds Windows on `windows-latest`,
+- the maintainer-owned release artifacts currently published by the workflow are Linux `x64`, Windows `x64`, plus the formal source archive,
 - broader package-manager distribution beyond the maintainer-owned AUR package is not published yet and should not be implied in release notes,
+- Winget is not published yet and should not be implied in release notes,
 - the first maintainer-owned package-manager target is the Arch `makepkg` package spec in `packaging/arch/oceandl/`.
 
 ## Versioning policy
@@ -20,7 +22,7 @@ Keep public messaging aligned with the current project state:
 
 ## Release checklist
 
-1. Ensure the Arch-based Linux release path is green locally and in GitHub Actions before tagging.
+1. Ensure the maintained Linux and Windows CI paths are green before tagging.
 2. Ensure the support matrix and bootstrap commands in `README.md` still match the current CI/toolchain reality.
 3. Ensure the release notes and README language still describe the release as alpha/source-first unless that policy has intentionally changed.
 4. Run local smoke checks from the build tree:
@@ -34,11 +36,15 @@ Keep public messaging aligned with the current project state:
 6. Create a version tag:
    - `git tag vX.Y.Z`
    - `git push origin vX.Y.Z`
-7. Verify the `Release` workflow packages the Linux install tree from the Arch container:
-   - `bin/` contains `oceandl`
-   - non-system runtime libraries are bundled next to the executable on Linux
+7. Verify the `Release` workflow packages both maintained install trees:
+   - Linux artifact from the Arch container:
+     - `bin/` contains `oceandl`
+     - non-system runtime libraries are bundled next to the executable on Linux
+   - Windows artifact from `windows-latest`:
+     - `bin/` contains `oceandl.exe`
+     - non-system runtime DLLs are bundled next to the executable on Windows
 8. Verify the publish job also creates the formal source archive `oceandl-src-vX.Y.Z.tar.gz`.
-9. Verify the workflow re-downloads the final Linux archive, extracts it, and smoke-tests the extracted binary.
+9. Verify the workflow re-downloads the final Linux and Windows archives, extracts them, and smoke-tests the extracted binaries.
 10. Verify the publish job generates and uploads `SHA256SUMS`.
 11. Verify each uploaded archive can be checked with the published SHA-256 values.
 12. Update `packaging/arch/oceandl/PKGBUILD` with the new `pkgver` and the SHA-256 for `oceandl-src-vX.Y.Z.tar.gz`.
@@ -57,3 +63,13 @@ Keep public messaging aligned with the current project state:
 - Detached signatures are intentionally **not** published yet.
 - Signature support is deferred until maintainer-managed signing keys, storage, and rotation policy are in place.
 - When signing keys are ready, add detached signatures for `SHA256SUMS` or for each release asset as a follow-up.
+
+## Future Winget prerequisites
+
+Do not publish Winget manifests until all of the following stay stable for at least 1-2 releases:
+
+- `oceandl-windows-x64.zip` remains the maintained Windows artifact name and layout,
+- the Windows portable archive keeps passing extract-and-run verification in GitHub Actions,
+- the publisher/package identity is settled,
+- the Windows user-facing docs stay accurate for manual download and upgrade flow,
+- the GitHub Release asset URL and checksum flow are stable enough to act as the authoritative upstream for Winget.
