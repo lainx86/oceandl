@@ -6,6 +6,8 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 
 ## [Unreleased]
 
+## [0.2.6] - 2026-04-03
+
 ### Added
 
 - `windows-latest` CI coverage for configure, build, `ctest`, and basic CLI smoke checks using MSVC with `vcpkg`.
