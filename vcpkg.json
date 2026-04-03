@@ -1,9 +1,0 @@
-{
-  "name": "oceandl",
-  "version-string": "0.2.4",
-  "dependencies": [
-    "curl",
-    "fmt",
-    "tomlplusplus"
-  ]
-}

@@ -15,7 +15,7 @@ Requirements:
 - fmt
 - tomlplusplus
 
-User-facing bootstrap commands for Linux/macOS/Windows live in `README.md`.
+User-facing bootstrap commands for the maintained Arch Linux / AUR path live in `README.md`.
 If you change supported platforms, dependency bootstrap, CI runner assumptions, or release positioning, update `README.md` and `RELEASING.md` in the same change so public docs stay aligned with reality.
 
 Build and test:
@@ -44,24 +44,7 @@ ctest --test-dir build-strict --output-on-failure
 
 `OCEANDL_STRICT_WARNINGS=ON` enables the maintainer warning policy for project targets:
 
-- GCC/Clang/AppleClang: `-Wall -Wextra -Wpedantic -Werror`
-- MSVC: `/W4 /WX`
-
-Windows PowerShell:
-
-```powershell
-cmake -S . -B build
-cmake --build build --config Release
-ctest --test-dir build --build-config Release --output-on-failure
-```
-
-Windows strict warning check:
-
-```powershell
-cmake -S . -B build-strict -DCMAKE_BUILD_TYPE=Release -DOCEANDL_STRICT_WARNINGS=ON
-cmake --build build-strict --config Release --parallel
-ctest --test-dir build-strict --build-config Release --output-on-failure
-```
+- GCC/Clang-family compilers on the maintained Linux path: `-Wall -Wextra -Wpedantic -Werror`
 
 ## Security reports
 
@@ -81,7 +64,7 @@ Security reports are currently triaged by Feby, with an acknowledgement target o
 
 - Prefer small, focused changes.
 - Keep failure modes explicit and actionable.
-- Preserve cross-platform behavior (Linux/macOS/Windows).
+- Preserve Linux behavior and keep the Arch/AUR path maintainable.
 - Favor safe defaults over permissive behavior for download integrity.
 
 ## Commit and PR style

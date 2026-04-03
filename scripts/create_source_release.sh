@@ -27,7 +27,11 @@ tmp_output="$output_dir/.${output_name}.tmp"
 
 (
   cd "$repo_root"
-  git ls-files -z \
+  while IFS= read -r -d '' path; do
+    if [ -e "$path" ]; then
+      printf '%s\0' "$path"
+    fi
+  done < <(git ls-files -z) \
     | tar \
       --null \
       --files-from=- \

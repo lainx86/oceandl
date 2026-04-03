@@ -12,11 +12,11 @@
 
 What that means in practice:
 
-- The recommended installation path today is still building from source on one of the CI-covered platforms.
+- The recommended installation path today is Arch Linux via AUR, or source build on an Arch-based system.
 - GitHub Releases may publish CI-built archives for convenience, but they are still alpha artifacts, not a promise of "stable binary-first" support.
-- Today that public release path is intentionally narrow: Linux `x64` archives and the formal source archive are the maintained release artifacts.
-- Package-manager distribution is still limited. There is no official Homebrew formula, Scoop/Winget package, or distro-hosted package feed yet.
+- Today that public release path is intentionally narrow: the formal source archive used by AUR, plus a maintainer-built Linux `x64` convenience archive.
 - The only first-stage package-manager target maintained in this repository today is the Arch `makepkg` package spec described below.
+- Other operating systems and package ecosystems are not maintainer-owned targets right now.
 - Backward compatibility and platform support should be treated as improving, not frozen.
 
 ## Features
@@ -53,15 +53,13 @@ Built-in datasets:
 
 ## Support matrix
 
-The table below describes the platforms that are exercised in CI today and how users are expected to approach them.
+The table below describes the maintained path today.
 
-| Platform | CI coverage today | Recommended path | Notes |
+| Maintained path | CI coverage today | Recommended path | Notes |
 | --- | --- | --- | --- |
-| Linux (`ubuntu-latest` reference in CI) | configure, build, `ctest`, CLI smoke, strict warnings, hermetic localhost HTTP integration | source build from distro packages | Most thoroughly exercised path today and the only platform with maintainer-owned release archives right now. |
-| macOS (`macos-latest` reference in CI) | configure, build, `ctest`, CLI smoke | source build from Homebrew packages | CI-covered source-build path; no maintainer-owned release archive is published today. |
-| Windows (`windows-latest` with MSVC + `vcpkg`) | configure, build, `ctest`, CLI smoke | source build from Visual Studio/Build Tools + `vcpkg` | CI-covered source-build path; no maintainer-owned release archive is published today. |
+| Arch Linux / Arch-based distributions | configure, build, `ctest`, CLI smoke, strict warnings, hermetic localhost HTTP integration, AUR `makepkg` verification | `yay -S oceandl` or source build from Arch packages | GitHub Actions runs these checks inside an Arch Linux container on a GitHub-hosted Linux runner because GitHub does not provide a managed Arch runner. |
 
-Only the CI-covered platforms above should be described as supported in public docs or release notes.
+Other environments may still build from source, but they are not maintainer-gated support targets and should not be described as such in public docs or release notes.
 
 ## Install dependencies
 
@@ -72,55 +70,26 @@ Expected build dependencies:
 - `libcurl`
 - `fmt`
 - `tomlplusplus`
+- Python 3 if you want the full hermetic localhost integration test on Linux
 
-For Windows and reproducible dependency bootstrap, this repo also ships `vcpkg.json`.
-
-Linux example (`ubuntu-latest` / Debian / Ubuntu, same package bootstrap used in CI):
+Maintained bootstrap example (Arch Linux / Arch-based):
 
 ```bash
-sudo apt-get update
-sudo apt-get install -y \
-  build-essential \
+sudo pacman -Syu --needed \
+  base-devel \
   cmake \
-  ninja-build \
-  libcurl4-openssl-dev \
-  libfmt-dev \
-  libtomlplusplus-dev
+  ninja \
+  curl \
+  fmt \
+  tomlplusplus \
+  python
 ```
 
-Linux note for Arch-like distributions:
-
-```bash
-sudo pacman -S --needed base-devel cmake ninja curl fmt tomlplusplus
-```
-
-Package names differ across Linux distributions. If you are not on Debian/Ubuntu or Arch-like Linux, install the equivalent development packages for `libcurl`, `fmt`, and `tomlplusplus`, then use the source-build commands below.
-
-macOS example (Homebrew):
-
-```bash
-brew update
-brew install cmake ninja curl fmt tomlplusplus
-```
-
-Windows example (Developer PowerShell for Visual Studio 2022 or Build Tools 2022):
-
-Prerequisites:
-
-- MSVC toolchain with "Desktop development with C++"
-- a local `vcpkg` checkout
-
-```powershell
-$env:VCPKG_INSTALLATION_ROOT = "C:\src\vcpkg"
-& "$env:VCPKG_INSTALLATION_ROOT\vcpkg.exe" install `
-  curl:x64-windows `
-  fmt:x64-windows `
-  tomlplusplus:x64-windows
-```
+If you are building on another Linux distribution, install the equivalent development packages for `libcurl`, `fmt`, `tomlplusplus`, and optionally Python 3, then use the same source-build commands below. Those non-Arch paths are best-effort only.
 
 ## Build from source
 
-Linux/macOS:
+Linux:
 
 ```bash
 cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
@@ -128,26 +97,10 @@ cmake --build build --parallel
 ctest --test-dir build --output-on-failure
 ```
 
-Windows PowerShell:
-
-```powershell
-cmake -S . -B build `
-  -DCMAKE_BUILD_TYPE=Release `
-  -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_INSTALLATION_ROOT\scripts\buildsystems\vcpkg.cmake"
-cmake --build build --config Release --parallel
-ctest --test-dir build --build-config Release --output-on-failure
-```
-
-Install the binary to a custom prefix (Linux/macOS):
+Install the binary to a custom prefix:
 
 ```bash
 cmake --install build --prefix /tmp/oceandl-install
-```
-
-Windows install example:
-
-```powershell
-cmake --install build --config Release --prefix "$env:TEMP\oceandl-install"
 ```
 
 Run the binary:
@@ -169,7 +122,7 @@ The first official package-manager target is:
 Why this one first:
 
 - Linux is the most thoroughly exercised platform in CI today.
-- A single source package is lower-maintenance than trying to launch Homebrew plus a Windows ecosystem at the same time.
+- A single Arch source package is lower-maintenance than trying to support multiple package ecosystems at the same time.
 - The package can build from a formal source release asset with a published SHA-256 checksum.
 
 Authoritative files live in:
@@ -198,7 +151,7 @@ cd oceandl
 makepkg -si
 ```
 
-For now, source build remains the default recommendation for most users.
+For most Arch users, the AUR package is the default recommendation. Source build remains the fallback path for maintainers and local debugging.
 
 ## Commands
 
@@ -287,8 +240,6 @@ Default locations:
 
 ```text
 Linux   : ~/.config/oceandl/config.toml
-macOS   : ~/Library/Application Support/oceandl/config.toml
-Windows : %APPDATA%\oceandl\config.toml
 ```
 
 Example:
@@ -379,7 +330,7 @@ Notes:
 ## Release and distribution
 
 - Public release posture remains alpha and source-first.
-- CI builds and tests on Linux, macOS, and Windows.
+- CI builds and tests the maintained path inside an Arch Linux container on a GitHub-hosted Linux runner.
 - Tagging `v*` triggers the release workflow that builds the Linux release archive, smoke-tests the extracted artifact, and uploads it to GitHub Releases.
 - Produced artifacts currently include `oceandl-linux-x64.tar.gz`, the formal source archive `oceandl-src-vX.Y.Z.tar.gz`, and a `SHA256SUMS` file for integrity verification.
 - Current recommendation:
@@ -393,12 +344,6 @@ Checksum verification examples:
 
 ```bash
 sha256sum -c SHA256SUMS
-```
-
-```powershell
-$expected = (Select-String 'oceandl-linux-x64.tar.gz' .\SHA256SUMS).ToString().Split(' ')[0]
-$actual = (Get-FileHash .\oceandl-linux-x64.tar.gz -Algorithm SHA256).Hash.ToLower()
-if ($actual -ne $expected) { throw "checksum mismatch" }
 ```
 
 ## Security reporting

@@ -7,20 +7,27 @@ on:
 jobs:
   strict-warnings:
     runs-on: ubuntu-latest
+    container:
+      image: archlinux:latest
+    defaults:
+      run:
+        shell: bash
 
     steps:
-      - uses: actions/checkout@v4
-
       - name: Install dependencies
         run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            build-essential \
+          pacman -Syu --noconfirm --needed archlinux-keyring
+          pacman -S --noconfirm --needed \
+            base-devel \
             cmake \
-            ninja-build \
-            libcurl4-openssl-dev \
-            libfmt-dev \
-            libtomlplusplus-dev
+            ninja \
+            curl \
+            fmt \
+            tomlplusplus \
+            python \
+            git
+
+      - uses: actions/checkout@v4
 
       - name: Configure strict warnings
         run: >
@@ -33,125 +40,77 @@ jobs:
       - name: Run tests with strict warnings
         run: ctest --test-dir build-strict --output-on-failure
 
-  build-test:
-    strategy:
-      fail-fast: false
-      matrix:
-        os:
-          - ubuntu-latest
-          - macos-latest
-          - windows-latest
-    runs-on: ${{ matrix.os }}
+  arch-build-test:
+    runs-on: ubuntu-latest
+    container:
+      image: archlinux:latest
+    defaults:
+      run:
+        shell: bash
 
     steps:
+      - name: Install dependencies
+        run: |
+          pacman -Syu --noconfirm --needed archlinux-keyring
+          pacman -S --noconfirm --needed \
+            base-devel \
+            cmake \
+            ninja \
+            curl \
+            fmt \
+            tomlplusplus \
+            python \
+            git
+
       - uses: actions/checkout@v4
 
-      - name: Install dependencies (Ubuntu)
-        if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            build-essential \
-            cmake \
-            ninja-build \
-            libcurl4-openssl-dev \
-            libfmt-dev \
-            libtomlplusplus-dev
-
-      - name: Install dependencies (macOS)
-        if: runner.os == 'macOS'
-        run: |
-          brew update
-          brew install cmake ninja curl fmt tomlplusplus
-
-      - name: Install dependencies (Windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          $candidateRoots = @()
-          if ($env:VCPKG_INSTALLATION_ROOT) {
-            $candidateRoots += $env:VCPKG_INSTALLATION_ROOT
-          }
-          $candidateRoots += @(
-            "C:\vcpkg"
-          )
-
-          $vcpkgRoot = $null
-          foreach ($candidate in $candidateRoots) {
-            if (-not $candidate) {
-              continue
-            }
-            if (
-              (Test-Path (Join-Path $candidate "vcpkg.exe")) -or
-              (Test-Path (Join-Path $candidate "bootstrap-vcpkg.bat"))
-            ) {
-              $vcpkgRoot = $candidate
-              break
-            }
-          }
-
-          if (-not $vcpkgRoot) {
-            $vcpkgRoot = Join-Path $env:RUNNER_TEMP "vcpkg"
-            if (Test-Path $vcpkgRoot) {
-              Remove-Item -Recurse -Force $vcpkgRoot
-            }
-            git clone --depth 1 https://github.com/microsoft/vcpkg.git "$vcpkgRoot"
-          }
-
-          if (-not (Test-Path (Join-Path $vcpkgRoot "vcpkg.exe"))) {
-            & "$vcpkgRoot\bootstrap-vcpkg.bat" -disableMetrics
-          }
-
-          "VCPKG_INSTALLATION_ROOT=$vcpkgRoot" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-
-          & "$vcpkgRoot\vcpkg.exe" install `
-            curl:x64-windows `
-            fmt:x64-windows `
-            tomlplusplus:x64-windows
-
-      - name: Configure (Linux/macOS)
-        if: runner.os != 'Windows'
+      - name: Configure
         run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
 
-      - name: Configure (Windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: >
-          if (-not $env:VCPKG_INSTALLATION_ROOT) { throw "VCPKG_INSTALLATION_ROOT is not set." };
-          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
-          -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake"
-
-      - name: Build (Linux/macOS)
-        if: runner.os != 'Windows'
+      - name: Build
         run: cmake --build build --parallel
 
-      - name: Build (Windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: cmake --build build --config Release --parallel
-
-      - name: Run tests (Linux/macOS)
-        if: runner.os != 'Windows'
+      - name: Run tests
         run: ctest --test-dir build --output-on-failure
 
-      - name: Run tests (Windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: ctest --test-dir build --build-config Release --output-on-failure
-
-      - name: CLI smoke test (Linux/macOS)
-        if: runner.os != 'Windows'
+      - name: CLI smoke test
         run: |
           ./build/oceandl --version
           ./build/oceandl datasets
           ./build/oceandl providers
           ./build/oceandl download --help
 
-      - name: CLI smoke test (Windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
+  aur-package:
+    runs-on: ubuntu-latest
+    container:
+      image: archlinux:latest
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+      - name: Install dependencies
         run: |
-          .\build\Release\oceandl.exe --version
-          .\build\Release\oceandl.exe datasets
-          .\build\Release\oceandl.exe providers
-          .\build\Release\oceandl.exe download --help
+          pacman -Syu --noconfirm --needed archlinux-keyring
+          pacman -S --noconfirm --needed \
+            base-devel \
+            cmake \
+            ninja \
+            curl \
+            fmt \
+            tomlplusplus \
+            python \
+            git
+
+      - uses: actions/checkout@v4
+
+      - name: Verify AUR package path
+        run: |
+          version="$(sed -n 's/^project(oceandl VERSION \\([0-9.]*\\) LANGUAGES CXX)$/\\1/p' CMakeLists.txt)"
+          if [ -z "$version" ]; then
+            echo "failed to read project version from CMakeLists.txt" >&2
+            exit 1
+          fi
+          mkdir -p dist
+          bash ./scripts/create_source_release.sh "$version" "dist/oceandl-src-v${version}.tar.gz"
+          bash ./scripts/verify_arch_pkgbuild.sh "dist/oceandl-src-v${version}.tar.gz" packaging/arch/oceandl

@@ -5,6 +5,7 @@
 /dist-*
 /.codex
 /__cmake_systeminformation/
+/problems/
 /.pytest_cache
 /__pycache__
 /data
