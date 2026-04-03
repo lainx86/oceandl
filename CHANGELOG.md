@@ -6,11 +6,15 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 
 ## [Unreleased]
 
+## [0.2.5] - 2026-04-03
+
 ### Changed
 
 - Maintainer-owned CI now runs the supported path inside Arch Linux containers on GitHub-hosted Linux runners, and non-Linux CI jobs were removed from the supported workflow.
 - Contributor and user-facing docs now describe the project as Linux/AUR-focused instead of implying active macOS or Windows support.
 - `problems/` is now intended to stay local to the maintainer workspace rather than tracked in the repository.
+- The AUR verification workflow now reads the project version robustly from `CMakeLists.txt`.
+- Release-source and AUR packaging scripts now handle GitHub Actions Arch container constraints correctly by marking the repo as a safe Git directory and running `makepkg` as an unprivileged user.
 
 ## [0.2.4] - 2026-04-03
 
