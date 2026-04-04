@@ -9,6 +9,14 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
+if(
+    MSVC
+    AND DEFINED VCPKG_TARGET_TRIPLET
+    AND VCPKG_TARGET_TRIPLET MATCHES "-static$"
+)
+    set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+endif()
+
 option(
     OCEANDL_STRICT_WARNINGS
     "Enable the maintainer warning policy for oceandl targets."
