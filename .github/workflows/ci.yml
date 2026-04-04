@@ -185,5 +185,8 @@ jobs:
             exit 1
           fi
           mkdir -p dist
+          pkgbuild_dir="$(mktemp -d)"
+          cp -R packaging/arch/oceandl/. "$pkgbuild_dir/"
+          sed -i "s/^pkgver=.*/pkgver=${version}/" "$pkgbuild_dir/PKGBUILD"
           bash ./scripts/create_source_release.sh "$version" "dist/oceandl-src-v${version}.tar.gz"
-          bash ./scripts/verify_arch_pkgbuild.sh "dist/oceandl-src-v${version}.tar.gz" packaging/arch/oceandl
+          bash ./scripts/verify_arch_pkgbuild.sh "dist/oceandl-src-v${version}.tar.gz" "$pkgbuild_dir"
