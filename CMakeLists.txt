@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.24)
 
-project(oceandl VERSION 0.2.6 LANGUAGES CXX)
+project(oceandl VERSION 0.2.7 LANGUAGES CXX)
 
 include(GNUInstallDirs)
 include(CTest)
@@ -71,6 +71,9 @@ target_include_directories(oceandl_lib PUBLIC cpp/include)
 target_link_libraries(oceandl_lib PUBLIC CURL::libcurl fmt::fmt tomlplusplus::tomlplusplus)
 if(WIN32)
     target_compile_definitions(oceandl_lib PUBLIC NOMINMAX WIN32_LEAN_AND_MEAN)
+    if(DEFINED VCPKG_TARGET_TRIPLET AND VCPKG_TARGET_TRIPLET MATCHES "-static")
+        target_compile_definitions(oceandl_lib PUBLIC CURL_STATICLIB)
+    endif()
 endif()
 oceandl_apply_warnings(oceandl_lib)
 

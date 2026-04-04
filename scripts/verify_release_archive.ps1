@@ -35,8 +35,9 @@ try {
     & $binaryPath download --help | Out-Null
 
     $bundledDlls = Get-ChildItem (Join-Path $packageDir.FullName "bin") -Filter *.dll -ErrorAction SilentlyContinue
-    if (-not $bundledDlls) {
-        throw "No bundled runtime DLLs were found under $($packageDir.FullName)\bin."
+    if ($bundledDlls) {
+        $dllNames = ($bundledDlls | Select-Object -ExpandProperty Name) -join ", "
+        throw "The maintained Windows release path is expected to be self-contained without extra runtime DLLs, but found: $dllNames"
     }
 }
 finally {

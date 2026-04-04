@@ -118,12 +118,9 @@ jobs:
           if (-not $env:VCPKG_ROOT) {
             throw "VCPKG_ROOT is not set."
           }
-          $bundleDir = Join-Path $PWD "vcpkg_installed/x64-windows/bin"
           cmake -S . -B build -G "Visual Studio 17 2022" -A x64 `
             -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_ROOT\scripts\buildsystems\vcpkg.cmake" `
-            -DVCPKG_TARGET_TRIPLET=x64-windows `
-            -DOCEANDL_ENABLE_RELEASE_BUNDLE=ON `
-            -DOCEANDL_EXTRA_BUNDLE_DIRS="$bundleDir"
+            -DVCPKG_TARGET_TRIPLET=x64-windows-static
 
       - name: Build
         shell: pwsh

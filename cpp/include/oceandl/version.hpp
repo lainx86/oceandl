@@ -4,6 +4,6 @@
 
 namespace oceandl {
 
-inline constexpr std::string_view kVersion = "0.2.6";
+inline constexpr std::string_view kVersion = "0.2.7";
 
 }  // namespace oceandl

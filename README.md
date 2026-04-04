@@ -77,7 +77,7 @@ If your goal is simply to use the tool, you can stop there. You do not need to b
 Windows support target for end users is currently:
 
 - `x64`
-- portable zip archive
+- portable zip archive with a self-contained `oceandl.exe`
 - manual download from GitHub Releases
 - not Winget yet
 
@@ -87,7 +87,10 @@ Download `oceandl-windows-x64.zip` from the latest GitHub Release, then extract 
 %LOCALAPPDATA%\Programs\oceandl
 ```
 
-Run it directly:
+This is a CLI program. Do not expect a useful result from double-clicking `oceandl.exe` in Explorer.
+Open PowerShell or Windows Terminal in the extracted folder and run it from there.
+
+Run it like this:
 
 ```powershell
 .\oceandl-windows-x64\bin\oceandl.exe --help
@@ -324,8 +327,8 @@ Notes:
   Reduce `retry_count` in CLI flags or `config.toml`.
 - `target is already being used by another process`:
   Another `oceandl` process is downloading the same target, or a stale lock still needs recovery; wait for the active process to finish and rerun the command.
-- `The code execution cannot proceed because <name>.dll was not found`:
-  Make sure you extracted the full `oceandl-windows-x64.zip` archive and kept the bundled DLLs next to `oceandl.exe` under `bin\`.
+- `Nothing useful happens when I double-click oceandl.exe`:
+  `oceandl` is a terminal program, not a GUI app. Open PowerShell or Windows Terminal and run `.\bin\oceandl.exe --help` from the extracted folder.
 - `Windows protected your PC`:
   This is SmartScreen. Verify the file came from the expected GitHub Release, check `SHA256SUMS`, then use the normal Windows trust flow if you want to run it.
 - `'oceandl' is not recognized as an internal or external command`:
@@ -350,7 +353,7 @@ Notes:
 | Maintained path | CI coverage today | Recommended path | Notes |
 | --- | --- | --- | --- |
 | Arch Linux / Arch-based distributions | configure, build, `ctest`, CLI smoke, strict warnings, hermetic localhost HTTP integration, AUR `makepkg` verification | `yay -S oceandl` or the AUR package repo | GitHub Actions runs these checks inside an Arch Linux container on a GitHub-hosted Linux runner because GitHub does not provide a managed Arch runner. |
-| Windows `x64` portable release path | configure, build, `ctest`, CLI smoke, portable release archive verification | download `oceandl-windows-x64.zip` from GitHub Releases | Current Windows target is manual-download portable `x64` only. Winget is intentionally not published yet. |
+| Windows `x64` portable release path | configure, build, `ctest`, CLI smoke, portable release archive verification | download `oceandl-windows-x64.zip` from GitHub Releases | Current Windows target is manual-download portable `x64` only. The maintained release path is a self-contained CLI executable without extra runtime DLL files next to `oceandl.exe`. Winget is intentionally not published yet. |
 
 Other environments may still build from source, but they are not maintainer-gated support targets and should not be described as such in public docs or release notes.
 
@@ -425,7 +428,7 @@ if (-not (Test-Path "$env:VCPKG_ROOT\vcpkg.exe")) {
 
 cmake -S . -B build -G "Visual Studio 17 2022" -A x64 `
   -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_ROOT\scripts\buildsystems\vcpkg.cmake" `
-  -DVCPKG_TARGET_TRIPLET=x64-windows
+  -DVCPKG_TARGET_TRIPLET=x64-windows-static
 cmake --build build --config Release --parallel
 ctest --test-dir build --build-config Release --output-on-failure
 ```
@@ -487,6 +490,7 @@ Windows run-from-build-tree example:
 - Linux CI builds and tests the maintained Arch path inside an Arch Linux container on a GitHub-hosted Linux runner.
 - Windows CI builds and tests the maintained Windows `x64` path on `windows-latest`.
 - Tagging `v*` triggers the release workflow that builds the Linux and Windows release archives, smoke-tests the extracted artifacts, and uploads them to GitHub Releases.
+- The maintained Windows release path now targets a self-contained `oceandl.exe`, not a release folder that depends on extra runtime DLL files next to the executable.
 - Produced artifacts currently include `oceandl-linux-x64.tar.gz`, `oceandl-windows-x64.zip`, the formal source archive `oceandl-src-vX.Y.Z.tar.gz`, and a `SHA256SUMS` file for integrity verification.
 - Current recommendation:
   - prefer AUR on Arch-based systems,

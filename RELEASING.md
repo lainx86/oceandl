@@ -10,6 +10,7 @@ Keep public messaging aligned with the current project state:
 - GitHub Release archives are convenience artifacts for evaluation and early adopters, not a claim that `oceandl` is already a stable binary-first product,
 - the maintainer-owned release workflow builds Linux in an Arch Linux container on a GitHub-hosted Linux runner and builds Windows on `windows-latest`,
 - the maintainer-owned release artifacts currently published by the workflow are Linux `x64`, Windows `x64`, plus the formal source archive,
+- the maintained Windows artifact target is a self-contained CLI executable in `oceandl-windows-x64.zip`, not a multi-DLL app folder,
 - broader package-manager distribution beyond the maintainer-owned AUR package is not published yet and should not be implied in release notes,
 - Winget is not published yet and should not be implied in release notes,
 - the first maintainer-owned package-manager target is the Arch `makepkg` package spec in `packaging/arch/oceandl/`.
@@ -42,7 +43,7 @@ Keep public messaging aligned with the current project state:
      - non-system runtime libraries are bundled next to the executable on Linux
    - Windows artifact from `windows-latest`:
      - `bin/` contains `oceandl.exe`
-     - non-system runtime DLLs are bundled next to the executable on Windows
+     - no extra runtime DLL files are required next to the executable on Windows
 8. Verify the publish job also creates the formal source archive `oceandl-src-vX.Y.Z.tar.gz`.
 9. Verify the workflow re-downloads the final Linux and Windows archives, extracts them, and smoke-tests the extracted binaries.
 10. Verify the publish job generates and uploads `SHA256SUMS`.

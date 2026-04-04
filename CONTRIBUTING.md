@@ -14,7 +14,7 @@ Requirements:
 - libcurl
 - fmt
 - tomlplusplus
-- for Windows source builds, a local `vcpkg` checkout plus the repo `vcpkg.json` manifest
+- for Windows source builds, a local `vcpkg` checkout plus the repo `vcpkg.json` manifest; the maintained Windows path uses the `x64-windows-static` triplet
 
 User-facing bootstrap commands for the maintained Arch Linux / AUR path and the Windows manual-download path live in `README.md`.
 If you change supported platforms, dependency bootstrap, CI runner assumptions, or release positioning, update `README.md` and `RELEASING.md` in the same change so public docs stay aligned with reality.

@@ -6,6 +6,14 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 
 ## [Unreleased]
 
+## [0.2.7] - 2026-04-04
+
+### Changed
+
+- The maintained Windows build and release path now uses the static `x64-windows-static` triplet, so the published portable archive targets a self-contained `oceandl.exe` instead of relying on extra runtime DLLs next to the executable.
+- Windows release verification now fails if extra runtime DLLs appear in the published archive, which keeps the portable package shape simple and predictable.
+- Windows user-facing docs now state explicitly that `oceandl.exe` is a terminal program and should be run from PowerShell or Windows Terminal rather than by double-clicking it in Explorer.
+
 ## [0.2.6] - 2026-04-03
 
 ### Added
@@ -17,6 +25,7 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 
 - Lock owner metadata is now written on Windows too, so stale lock recovery and lock-conflict handling no longer rely on weaker Windows-only heuristics.
 - User-facing and maintainer docs now describe the Windows `x64` portable release path and the prerequisites that remain before a future Winget rollout.
+- The maintained Windows packaging path now targets a self-contained executable instead of a release folder that depends on extra runtime DLLs next to `oceandl.exe`.
 
 ## [0.2.5] - 2026-04-03
 
