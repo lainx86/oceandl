@@ -6,6 +6,8 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 
 ## [Unreleased]
 
+## [0.2.8] - 2026-04-09
+
 ### Fixed
 
 - Windows downloads now retry a failed connect/resolve/timeout request once with IPv4 if the first attempt did not transfer any data, which improves reliability on machines where the default dual-stack path stalls.

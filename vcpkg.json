@@ -1,6 +1,6 @@
 {
   "name": "oceandl",
-  "version-string": "0.2.7",
+  "version-string": "0.2.8",
   "dependencies": [
     "curl",
     "fmt",
