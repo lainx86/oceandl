@@ -6,6 +6,12 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 
 ## [Unreleased]
 
+### Fixed
+
+- Windows downloads now retry a failed connect/resolve/timeout request once with IPv4 if the first attempt did not transfer any data, which improves reliability on machines where the default dual-stack path stalls.
+- Network errors now include libcurl's backend-specific error buffer when available, which makes Windows download failures easier to diagnose than the generic `Timeout was reached` message alone.
+- Test temporary directories now use collision-resistant names, so rerunning the suite no longer fails spuriously after an interrupted test process leaves old temp paths behind.
+
 ## [0.2.7] - 2026-04-04
 
 ### Changed

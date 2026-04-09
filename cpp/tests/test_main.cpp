@@ -81,9 +81,24 @@ class ScopedEnvVar {
 class TempDir {
   public:
     TempDir() {
-        path_ = std::filesystem::temp_directory_path()
-            / ("oceandl-test-" + std::to_string(std::rand()) + "-" + std::to_string(std::rand()));
-        std::filesystem::create_directories(path_);
+        const auto base = std::filesystem::temp_directory_path();
+        for (std::uint64_t attempt = 0; attempt < 1024; ++attempt) {
+            const auto nonce = static_cast<unsigned long long>(
+                std::chrono::steady_clock::now().time_since_epoch().count()
+            );
+            const auto candidate =
+                base
+                / (
+                    "oceandl-test-" + std::to_string(current_process_id_for_test()) + "-"
+                    + std::to_string(nonce) + "-" + std::to_string(attempt)
+                );
+            std::error_code error;
+            if (std::filesystem::create_directories(candidate, error)) {
+                path_ = candidate;
+                return;
+            }
+        }
+        throw std::runtime_error("failed to create a unique temporary test directory");
     }
 
     ~TempDir() {

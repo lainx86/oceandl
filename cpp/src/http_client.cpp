@@ -3,6 +3,7 @@
 #include <curl/curl.h>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <limits>
 #include <memory>
@@ -39,6 +40,13 @@ struct HeaderState {
     std::size_t bytes_transferred = 0;
     std::string callback_error;
     ResponseHandler* handler = nullptr;
+};
+
+struct RequestExecution {
+    CURLcode code = CURLE_OK;
+    long response_code = 0;
+    HeaderState state;
+    std::string error_message;
 };
 
 size_t discard_callback(char* data, size_t size, size_t nmemb, void* userdata) {
@@ -159,23 +167,69 @@ void set_common_options(CURL* curl, const HttpRequest& request, const std::strin
     curl_easy_setopt(curl, CURLOPT_USERAGENT, user_agent.c_str());
 }
 
-HttpResponse perform_request(
+std::string build_network_error_message(
+    CURLcode code,
+    std::string_view url,
+    std::string_view error_buffer
+) {
+    const auto fallback_message = std::string(curl_easy_strerror(code));
+    const auto detail = trim(error_buffer);
+    if (detail.empty() || to_lower(detail) == to_lower(fallback_message)) {
+        return fmt::format("{} for {}", fallback_message, url);
+    }
+
+    return fmt::format("{} for {} ({})", fallback_message, url, detail);
+}
+
+#ifdef _WIN32
+bool should_retry_with_ipv4(const RequestExecution& execution, bool head_request) {
+    switch (execution.code) {
+        case CURLE_OPERATION_TIMEDOUT:
+        case CURLE_COULDNT_CONNECT:
+        case CURLE_COULDNT_RESOLVE_HOST:
+            break;
+        default:
+            return false;
+    }
+
+    if (!execution.state.callback_error.empty()) {
+        return false;
+    }
+
+    if (head_request) {
+        return true;
+    }
+
+    return !execution.state.response_started && execution.state.bytes_transferred == 0;
+}
+#endif
+
+RequestExecution perform_request_once(
     const HttpRequest& request,
     const std::string& user_agent,
     bool head_request,
     ResponseHandler* handler
+#ifdef _WIN32
+    ,
+    long ipresolve
+#endif
 ) {
     std::unique_ptr<CURL, decltype(&curl_easy_cleanup)> curl(curl_easy_init(), &curl_easy_cleanup);
     if (!curl) {
         throw NetworkError("failed to initialize libcurl.", CURLE_FAILED_INIT);
     }
 
-    HeaderState state;
-    state.handler = handler;
+    RequestExecution execution;
+    execution.state.handler = handler;
 
     set_common_options(curl.get(), request, user_agent);
+#ifdef _WIN32
+    curl_easy_setopt(curl.get(), CURLOPT_IPRESOLVE, ipresolve);
+#endif
+    std::array<char, CURL_ERROR_SIZE> error_buffer{};
+    curl_easy_setopt(curl.get(), CURLOPT_ERRORBUFFER, error_buffer.data());
     curl_easy_setopt(curl.get(), CURLOPT_HEADERFUNCTION, header_callback);
-    curl_easy_setopt(curl.get(), CURLOPT_HEADERDATA, &state);
+    curl_easy_setopt(curl.get(), CURLOPT_HEADERDATA, &execution.state);
 
     std::unique_ptr<curl_slist, decltype(&curl_slist_free_all)> headers(nullptr, &curl_slist_free_all);
     for (const auto& header : request.headers) {
@@ -191,36 +245,68 @@ HttpResponse perform_request(
     } else {
         curl_easy_setopt(curl.get(), CURLOPT_HTTPGET, 1L);
         curl_easy_setopt(curl.get(), CURLOPT_WRITEFUNCTION, write_callback);
-        curl_easy_setopt(curl.get(), CURLOPT_WRITEDATA, &state);
+        curl_easy_setopt(curl.get(), CURLOPT_WRITEDATA, &execution.state);
     }
 
-    const auto code = curl_easy_perform(curl.get());
+    execution.code = curl_easy_perform(curl.get());
 
-    if (!head_request && !state.response_started && handler != nullptr) {
+    if (!head_request && !execution.state.response_started && handler != nullptr) {
         handler->on_response_start(
-            {.status_code = state.status_code, .headers = state.headers, .bytes_transferred = 0}
+            {
+                .status_code = execution.state.status_code,
+                .headers = execution.state.headers,
+                .bytes_transferred = 0
+            }
         );
-        state.response_started = true;
+        execution.state.response_started = true;
     }
 
-    if (!state.callback_error.empty()) {
-        throw std::runtime_error(state.callback_error);
-    }
+    curl_easy_getinfo(curl.get(), CURLINFO_RESPONSE_CODE, &execution.response_code);
+    execution.error_message =
+        build_network_error_message(execution.code, request.url, error_buffer.data());
+    return execution;
+}
 
-    if (code != CURLE_OK) {
-        throw NetworkError(
-            fmt::format("{} for {}", curl_easy_strerror(code), request.url),
-            static_cast<int>(code)
+HttpResponse perform_request(
+    const HttpRequest& request,
+    const std::string& user_agent,
+    bool head_request,
+    ResponseHandler* handler
+) {
+    auto execution = perform_request_once(
+        request,
+        user_agent,
+        head_request,
+        handler
+#ifdef _WIN32
+        ,
+        CURL_IPRESOLVE_WHATEVER
+#endif
+    );
+#ifdef _WIN32
+    if (should_retry_with_ipv4(execution, head_request)) {
+        execution = perform_request_once(
+            request,
+            user_agent,
+            head_request,
+            handler,
+            CURL_IPRESOLVE_V4
         );
     }
+#endif
 
-    long response_code = 0;
-    curl_easy_getinfo(curl.get(), CURLINFO_RESPONSE_CODE, &response_code);
+    if (!execution.state.callback_error.empty()) {
+        throw std::runtime_error(execution.state.callback_error);
+    }
+
+    if (execution.code != CURLE_OK) {
+        throw NetworkError(execution.error_message, static_cast<int>(execution.code));
+    }
 
     return {
-        .status_code = static_cast<int>(response_code),
-        .headers = state.headers,
-        .bytes_transferred = state.bytes_transferred,
+        .status_code = static_cast<int>(execution.response_code),
+        .headers = execution.state.headers,
+        .bytes_transferred = execution.state.bytes_transferred,
     };
 }
 
