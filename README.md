@@ -8,7 +8,6 @@
 
 - alpha
 - source-first
-- intended for technical early adopters and contributors
 
 What that means in practice:
 
