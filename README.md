@@ -530,4 +530,4 @@ sha256sum -c SHA256SUMS
 
 ## License
 
-MIT. See `LICENSE`.
+[MIT](LICENSE).
