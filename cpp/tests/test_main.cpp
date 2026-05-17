@@ -1276,6 +1276,153 @@ bool test_safe_replace_file_restores_existing_output_on_failure() {
         && expect(!std::filesystem::exists(backup), "backup removed after replace rollback");
 }
 
+bool test_downloader_preserves_partial_when_get_throws_after_open() {
+    TempDir temp_dir;
+    auto dataset = fixture_dataset();
+    auto request = fixture_request(temp_dir.path());
+    const auto payload = valid_netcdf_bytes();
+    const auto output_path = temp_dir.path() / dataset.id / "fixture.nc";
+    const auto part_path = temp_dir.path() / dataset.id / "fixture.nc.part";
+    const auto lock_path = temp_dir.path() / dataset.id / "fixture.nc.lock";
+
+    FakeHttpClient client;
+    client.on_head = [&](const HttpRequest&) { return HttpResponse{}; };
+    client.on_get = [&](const HttpRequest&, ResponseHandler& handler) {
+        handler.on_response_start(
+            HttpResponse{
+                .status_code = 200,
+                .headers = {{"content-length", std::to_string(payload.size())}},
+                .bytes_transferred = 0,
+            }
+        );
+        handler.on_chunk(std::string_view(payload.data(), 8));
+        throw NetworkError("connection dropped after opening part file", CURLE_RECV_ERROR);
+        return HttpResponse{};
+    };
+
+    std::ostringstream out;
+    std::ostringstream err;
+    Reporter reporter(out, err, Verbosity::Quiet);
+    Downloader downloader(client, reporter);
+    FixtureProvider provider(fixture_remote_metadata(payload.size(), true));
+
+    const auto summary = downloader.download(request, dataset, provider);
+    std::error_code size_error;
+    const auto part_size = std::filesystem::file_size(part_path, size_error);
+    return expect(summary.failed_count() == 1, "get exception after open fails")
+        && expect(!std::filesystem::exists(output_path), "get exception after open does not promote")
+        && expect(std::filesystem::exists(part_path), "get exception after open preserves part")
+        && expect(!size_error, "get exception after open part size readable")
+        && expect(part_size == 8, "get exception after open flushes partial chunk")
+        && expect(!path_has_lock_artifact(lock_path), "get exception after open removes lock");
+}
+
+#ifndef _WIN32
+bool test_downloader_reports_temporary_file_write_failure() {
+    if (!std::filesystem::exists("/dev/full")) {
+        return true;
+    }
+
+    TempDir temp_dir;
+    auto dataset = fixture_dataset();
+    auto request = fixture_request(temp_dir.path());
+    auto payload = valid_netcdf_bytes(2 * 1024 * 1024);
+    const auto output_path = temp_dir.path() / dataset.id / "fixture.nc";
+    const auto part_path = temp_dir.path() / dataset.id / "fixture.nc.part";
+
+    FakeHttpClient client;
+    client.on_head = [&](const HttpRequest&) { return HttpResponse{}; };
+    client.on_get = [&](const HttpRequest&, ResponseHandler& handler) {
+        std::error_code symlink_error;
+        std::filesystem::create_symlink("/dev/full", part_path, symlink_error);
+        if (symlink_error) {
+            throw std::runtime_error("failed to create /dev/full test symlink: " + symlink_error.message());
+        }
+
+        handler.on_response_start(
+            HttpResponse{
+                .status_code = 200,
+                .headers = {{"content-length", std::to_string(payload.size())}},
+                .bytes_transferred = 0,
+            }
+        );
+        handler.on_chunk(std::string_view(payload.data(), payload.size()));
+        return HttpResponse{
+            .status_code = 200,
+            .headers = {{"content-length", std::to_string(payload.size())}},
+            .bytes_transferred = payload.size(),
+        };
+    };
+
+    std::ostringstream out;
+    std::ostringstream err;
+    Reporter reporter(out, err, Verbosity::Quiet);
+    Downloader downloader(client, reporter);
+    FixtureProvider provider(fixture_remote_metadata(payload.size(), true));
+
+    const auto summary = downloader.download(request, dataset, provider);
+    return expect(summary.failed_count() == 1, "temporary file write failure fails")
+        && expect(!std::filesystem::exists(output_path), "temporary file write failure does not promote")
+        && expect_contains(
+            summary.failures().at(0).error_message,
+            part_path.string(),
+            "temporary file write failure includes part path"
+        );
+}
+
+bool test_downloader_does_not_promote_after_temporary_file_close_failure() {
+    if (!std::filesystem::exists("/dev/full")) {
+        return true;
+    }
+
+    TempDir temp_dir;
+    auto dataset = fixture_dataset();
+    auto request = fixture_request(temp_dir.path());
+    const auto payload = valid_netcdf_bytes();
+    const auto output_path = temp_dir.path() / dataset.id / "fixture.nc";
+    const auto part_path = temp_dir.path() / dataset.id / "fixture.nc.part";
+
+    FakeHttpClient client;
+    client.on_head = [&](const HttpRequest&) { return HttpResponse{}; };
+    client.on_get = [&](const HttpRequest&, ResponseHandler& handler) {
+        std::error_code symlink_error;
+        std::filesystem::create_symlink("/dev/full", part_path, symlink_error);
+        if (symlink_error) {
+            throw std::runtime_error("failed to create /dev/full test symlink: " + symlink_error.message());
+        }
+
+        handler.on_response_start(
+            HttpResponse{
+                .status_code = 200,
+                .headers = {{"content-length", std::to_string(payload.size())}},
+                .bytes_transferred = 0,
+            }
+        );
+        handler.on_chunk(std::string_view(payload.data(), 4));
+        return HttpResponse{
+            .status_code = 200,
+            .headers = {{"content-length", std::to_string(payload.size())}},
+            .bytes_transferred = 4,
+        };
+    };
+
+    std::ostringstream out;
+    std::ostringstream err;
+    Reporter reporter(out, err, Verbosity::Quiet);
+    Downloader downloader(client, reporter);
+    FixtureProvider provider(fixture_remote_metadata(payload.size(), true));
+
+    const auto summary = downloader.download(request, dataset, provider);
+    return expect(summary.failed_count() == 1, "temporary file close failure fails")
+        && expect(!std::filesystem::exists(output_path), "temporary file close failure does not promote")
+        && expect_contains(
+            summary.failures().at(0).error_message,
+            part_path.string(),
+            "temporary file close failure includes part path"
+        );
+}
+#endif
+
 bool test_default_config_path_matches_platform_conventions() {
 #ifdef _WIN32
     ScopedEnvVar app_data("APPDATA", std::string("C:/Fixture/AppData/Roaming"));
@@ -2063,6 +2210,11 @@ int main() {
         {"downloader_recovers_legacy_lock_file_without_peer_process", test_downloader_recovers_legacy_lock_file_without_peer_process},
 #endif
         {"safe_replace_file_restores_existing_output_on_failure", test_safe_replace_file_restores_existing_output_on_failure},
+        {"downloader_preserves_partial_when_get_throws_after_open", test_downloader_preserves_partial_when_get_throws_after_open},
+#ifndef _WIN32
+        {"downloader_reports_temporary_file_write_failure", test_downloader_reports_temporary_file_write_failure},
+        {"downloader_does_not_promote_after_temporary_file_close_failure", test_downloader_does_not_promote_after_temporary_file_close_failure},
+#endif
         {"default_config_path_matches_platform_conventions", test_default_config_path_matches_platform_conventions},
         {"default_output_dir_matches_platform_conventions", test_default_output_dir_matches_platform_conventions},
         {"downloader_retries_transient_network_error", test_downloader_retries_transient_network_error},

@@ -89,6 +89,10 @@ class FileResponseHandler final : public ResponseHandler {
           remote_content_length_(remote_content_length),
           reporter_(reporter) {}
 
+    ~FileResponseHandler() override {
+        close_noexcept();
+    }
+
     void on_response_start(const HttpResponse& response) override {
         response_ = response;
         if (response.status_code == 416) {
@@ -143,7 +147,12 @@ class FileResponseHandler final : public ResponseHandler {
 
         stream_.open(target_.temp_path(), mode);
         if (!stream_) {
-            throw std::runtime_error("failed to open the temporary file for writing.");
+            throw std::runtime_error(
+                fmt::format(
+                    "failed to open temporary file for writing: {}",
+                    target_.temp_path().string()
+                )
+            );
         }
 
         render_progress(true);
@@ -154,11 +163,15 @@ class FileResponseHandler final : public ResponseHandler {
             return true;
         }
         if (!stream_) {
-            return false;
+            throw std::runtime_error(
+                fmt::format("temporary file is not open for writing: {}", target_.temp_path().string())
+            );
         }
         stream_.write(chunk.data(), static_cast<std::streamsize>(chunk.size()));
         if (!stream_) {
-            return false;
+            throw std::runtime_error(
+                fmt::format("failed to write temporary file: {}", target_.temp_path().string())
+            );
         }
         bytes_written_ += static_cast<std::uint64_t>(chunk.size());
         render_progress(false);
@@ -170,10 +183,39 @@ class FileResponseHandler final : public ResponseHandler {
     }
 
     void close() {
+        if (closed_) {
+            return;
+        }
+        closed_ = true;
+
         render_progress(true);
         reporter_.finish_progress();
         if (stream_.is_open()) {
+            stream_.flush();
+            const bool flush_failed = !stream_;
             stream_.close();
+            if (flush_failed || !stream_) {
+                throw std::runtime_error(
+                    fmt::format(
+                        "failed to flush or close temporary file: {}",
+                        target_.temp_path().string()
+                    )
+                );
+            }
+        }
+    }
+
+    void close_noexcept() noexcept {
+        if (closed_) {
+            return;
+        }
+
+        try {
+            close();
+        } catch (...) {
+            if (stream_.is_open()) {
+                stream_.close();
+            }
         }
     }
 
@@ -209,7 +251,33 @@ class FileResponseHandler final : public ResponseHandler {
     std::uint64_t bytes_written_ = 0;
     bool resumed_transfer_ = false;
     bool discard_body_ = false;
+    bool closed_ = false;
     std::chrono::steady_clock::time_point last_progress_rendered_at_{};
+};
+
+class FileResponseCloseGuard {
+  public:
+    explicit FileResponseCloseGuard(FileResponseHandler& handler) : handler_(&handler) {}
+
+    ~FileResponseCloseGuard() {
+        if (handler_ != nullptr) {
+            handler_->close_noexcept();
+        }
+    }
+
+    FileResponseCloseGuard(const FileResponseCloseGuard&) = delete;
+    FileResponseCloseGuard& operator=(const FileResponseCloseGuard&) = delete;
+
+    void close() {
+        if (handler_ == nullptr) {
+            return;
+        }
+        handler_->close();
+        handler_ = nullptr;
+    }
+
+  private:
+    FileResponseHandler* handler_ = nullptr;
 };
 
 }  // namespace
@@ -350,6 +418,7 @@ std::pair<std::uint64_t, bool> TargetDownloadExecutor::stream_download(
         remote_metadata.content_length,
         *reporter_
     );
+    FileResponseCloseGuard close_guard(handler);
     const auto response = http_client_->get(
         {
             .url = target.url,
@@ -363,7 +432,7 @@ std::pair<std::uint64_t, bool> TargetDownloadExecutor::stream_download(
         },
         handler
     );
-    handler.close();
+    close_guard.close();
 
     if (attempted_resume && response.status_code == 416) {
         if (!remote_metadata.content_length.has_value()) {
