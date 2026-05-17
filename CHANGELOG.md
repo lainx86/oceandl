@@ -6,6 +6,12 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 
 ## [Unreleased]
 
+## [0.2.10] - 2026-05-18
+
+### Added
+
+- Added the NOAA OISST high-resolution ice concentration, SST anomaly, SST error, long-term mean, monthly, weekly, and land-sea mask datasets to the built-in catalog.
+
 ## [0.2.9] - 2026-05-17
 
 ### Fixed

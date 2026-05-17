@@ -395,14 +395,41 @@ bool test_downloader_cleans_up_lock_artifact_after_successful_download() {
 bool test_registry_contains_expected_datasets() {
     const auto registry = build_default_dataset_registry(default_app_config());
     const auto& oisst = registry.get("oisst");
+    const auto& oisst_icec_day_mean = registry.get("oisst_icec_day_mean");
+    const auto& oisst_sst_day_anom = registry.get("oisst_sst_day_anom");
+    const auto& oisst_sst_day_err = registry.get("oisst_sst_day_err");
+    const auto& oisst_icec_ltm = registry.get("oisst_icec_day_mean_ltm_1991_2020");
+    const auto& oisst_sst_ltm = registry.get("oisst_sst_day_mean_ltm_1991_2020");
+    const auto& oisst_lsmask = registry.get("oisst_lsmask");
     const auto& gpcp = registry.get("gpcp");
     const auto& mslp = registry.get("mslp");
     const auto& uwnd_surface = registry.get("uwnd_surface");
     const auto& hgt_pressure = registry.get("hgt_pressure");
 
-    return expect(registry.list().size() == 10, "dataset count includes recommended additions")
+    return expect(registry.list().size() == 25, "dataset count includes OISST high-resolution additions")
         && expect(oisst.file_name_for_year(2024) == "sst.day.mean.2024.nc", "oisst file name")
         && expect(oisst.requires_years(), "oisst requires years")
+        && expect(
+            oisst_icec_day_mean.file_name_for_year(2024) == "icec.day.mean.2024.nc",
+            "oisst icec per-year file name"
+        )
+        && expect(
+            oisst_sst_day_anom.file_name_for_year(2024) == "sst.day.anom.2024.nc",
+            "oisst sst anomaly per-year file name"
+        )
+        && expect(
+            oisst_sst_day_err.file_name_for_year(2024) == "sst.day.err.2024.nc",
+            "oisst sst error per-year file name"
+        )
+        && expect(
+            oisst_icec_ltm.file_name() == "icec.day.mean.ltm.1991-2020.nc",
+            "oisst icec ltm file name"
+        )
+        && expect(
+            oisst_sst_ltm.file_name() == "sst.day.mean.ltm.1991-2020.nc",
+            "oisst sst ltm file name"
+        )
+        && expect(oisst_lsmask.file_name() == "lsmask.oisst.nc", "oisst lsmask file name")
         && expect(gpcp.file_name() == "precip.mon.mean.nc", "gpcp file name")
         && expect(!gpcp.requires_years(), "gpcp single file")
         && expect(mslp.file_name() == "mslp.mon.mean.nc", "mslp file name")
@@ -412,6 +439,50 @@ bool test_registry_contains_expected_datasets() {
             "uwnd_surface base url"
         )
         && expect(hgt_pressure.file_name() == "hgt.mon.mean.nc", "hgt_pressure file name");
+}
+
+bool test_oisst_highres_catalog_entries() {
+    const auto registry = build_default_dataset_registry(default_app_config());
+    bool ok = true;
+
+    const std::vector<std::pair<std::string, std::string>> per_year_files{
+        {"oisst", "sst.day.mean.2024.nc"},
+        {"oisst_icec_day_mean", "icec.day.mean.2024.nc"},
+        {"oisst_sst_day_anom", "sst.day.anom.2024.nc"},
+        {"oisst_sst_day_err", "sst.day.err.2024.nc"},
+    };
+
+    for (const auto& [dataset_id, file_name] : per_year_files) {
+        const auto& dataset = registry.get(dataset_id);
+        ok = expect(dataset.requires_years(), dataset_id + " requires years") && ok;
+        ok = expect(
+            dataset.file_name_for_year(2024) == file_name,
+            dataset_id + " renders per-year filename"
+        ) && ok;
+    }
+
+    const std::vector<std::pair<std::string, std::string>> single_files{
+        {"oisst_icec_day_mean_ltm_1991_2020", "icec.day.mean.ltm.1991-2020.nc"},
+        {"oisst_icec_mon_ltm_1991_2020", "icec.mon.ltm.1991-2020.nc"},
+        {"oisst_icec_mon_mean", "icec.mon.mean.nc"},
+        {"oisst_icec_week_mean", "icec.week.mean.nc"},
+        {"oisst_lsmask", "lsmask.oisst.nc"},
+        {"oisst_sst_day_mean_ltm_1971_2000", "sst.day.mean.ltm.1971-2000.nc"},
+        {"oisst_sst_day_mean_ltm_1982_2010", "sst.day.mean.ltm.1982-2010.nc"},
+        {"oisst_sst_day_mean_ltm_1991_2020", "sst.day.mean.ltm.1991-2020.nc"},
+        {"oisst_sst_day_mean_ltm", "sst.day.mean.ltm.nc"},
+        {"oisst_sst_mon_ltm_1991_2020", "sst.mon.ltm.1991-2020.nc"},
+        {"oisst_sst_mon_mean", "sst.mon.mean.nc"},
+        {"oisst_sst_week_mean", "sst.week.mean.nc"},
+    };
+
+    for (const auto& [dataset_id, file_name] : single_files) {
+        const auto& dataset = registry.get(dataset_id);
+        ok = expect(!dataset.requires_years(), dataset_id + " is single-file") && ok;
+        ok = expect(dataset.file_name() == file_name, dataset_id + " filename") && ok;
+    }
+
+    return ok;
 }
 
 bool test_download_request_validation() {
@@ -1949,6 +2020,11 @@ bool test_catalog_builds_dataset_urls_from_provider_base_url() {
             registry.get("oisst").base_url
                 == "https://mirror.example.test/Datasets/noaa.oisst.v2.highres",
             "catalog builds oisst url from provider base url"
+        )
+        && expect(
+            registry.get("oisst_sst_week_mean").base_url
+                == "https://mirror.example.test/Datasets/noaa.oisst.v2.highres",
+            "catalog builds OISST family url from provider base url"
         );
 }
 
@@ -2179,6 +2255,7 @@ bool test_dataset_rejects_future_and_excessive_year_ranges() {
 int main() {
     const std::vector<std::pair<std::string, std::function<bool()>>> tests = {
         {"registry_contains_expected_datasets", test_registry_contains_expected_datasets},
+        {"oisst_highres_catalog_entries", test_oisst_highres_catalog_entries},
         {"download_request_validation", test_download_request_validation},
         {"download_request_rejects_excessive_retry_count", test_download_request_rejects_excessive_retry_count},
         {"download_command_parses_flags", test_download_command_parses_flags},

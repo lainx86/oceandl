@@ -40,7 +40,22 @@ What that means in practice:
 
 Built-in datasets:
 
-- `oisst` - NOAA OISST Daily Mean
+- `oisst` - NOAA OISST Daily SST Mean
+- `oisst_icec_day_mean` - NOAA OISST Daily Sea Ice Concentration
+- `oisst_sst_day_anom` - NOAA OISST Daily SST Anomaly
+- `oisst_sst_day_err` - NOAA OISST Daily SST Error
+- `oisst_icec_day_mean_ltm_1991_2020` - NOAA OISST Daily Ice Concentration LTM 1991-2020
+- `oisst_icec_mon_ltm_1991_2020` - NOAA OISST Monthly Ice Concentration LTM 1991-2020
+- `oisst_icec_mon_mean` - NOAA OISST Monthly Ice Concentration
+- `oisst_icec_week_mean` - NOAA OISST Weekly Ice Concentration
+- `oisst_lsmask` - NOAA OISST Land-Sea Mask
+- `oisst_sst_day_mean_ltm_1971_2000` - NOAA OISST Daily SST LTM 1971-2000
+- `oisst_sst_day_mean_ltm_1982_2010` - NOAA OISST Daily SST LTM 1982-2010
+- `oisst_sst_day_mean_ltm_1991_2020` - NOAA OISST Daily SST LTM 1991-2020
+- `oisst_sst_day_mean_ltm` - NOAA OISST Daily SST LTM
+- `oisst_sst_mon_ltm_1991_2020` - NOAA OISST Monthly SST LTM 1991-2020
+- `oisst_sst_mon_mean` - NOAA OISST Monthly SST
+- `oisst_sst_week_mean` - NOAA OISST Weekly SST
 - `gpcp` - GPCP Monthly Precipitation
 - `air` - NCEP Reanalysis Air Temperature
 - `mslp` - NCEP Reanalysis Mean Sea Level Pressure
@@ -181,11 +196,14 @@ Download a per-year dataset:
 
 ```bash
 oceandl download oisst --start-year 2024 --end-year 2025
+oceandl download oisst_sst_day_anom --start-year 2024 --end-year 2024
 ```
 
 Download a single-file dataset:
 
 ```bash
+oceandl download oisst_lsmask
+oceandl download oisst_sst_mon_mean
 oceandl download gpcp
 oceandl download air
 ```
@@ -248,9 +266,11 @@ Examples:
 
 ```bash
 oceandl download oisst --start-year 2020 --end-year 2022
+oceandl download oisst_icec_day_mean --start-year 2024 --end-year 2024
 oceandl download oisst --start-year 2024 --end-year 2025 --overwrite
 oceandl download oisst --start-year 2024 --end-year 2025 --no-resume
 oceandl download oisst --start-year 2020 --end-year 2022 --timeout 90 --chunk-size 1048576 --retries 5
+oceandl --quiet download oisst_sst_week_mean
 oceandl --quiet download gpcp
 ```
 
@@ -284,23 +304,15 @@ retry_count = 3
 overwrite = false
 resume = true
 
-[dataset_base_urls]
-oisst = "https://downloads.psl.noaa.gov/Datasets/noaa.oisst.v2.highres"
-gpcp = "https://downloads.psl.noaa.gov/Datasets/gpcp"
-air = "https://downloads.psl.noaa.gov/Datasets/ncep.reanalysis.derived/surface"
-mslp = "https://downloads.psl.noaa.gov/Datasets/ncep.reanalysis.derived/surface"
-uwnd_surface = "https://downloads.psl.noaa.gov/Datasets/ncep.reanalysis.derived/surface"
-vwnd_surface = "https://downloads.psl.noaa.gov/Datasets/ncep.reanalysis.derived/surface"
-rhum_surface = "https://downloads.psl.noaa.gov/Datasets/ncep.reanalysis.derived/surface"
-pr_wtr = "https://downloads.psl.noaa.gov/Datasets/ncep.reanalysis.derived/surface"
-hgt_pressure = "https://downloads.psl.noaa.gov/Datasets/ncep.reanalysis2.derived/pressure"
-omega_pressure = "https://downloads.psl.noaa.gov/Datasets/ncep.reanalysis2.derived/pressure"
+[provider_base_urls]
+psl = "https://downloads.psl.noaa.gov"
 ```
 
 All CLI flags still override the config file.
 
 Notes:
 
+- Built-in dataset URLs are composed from `provider_base_urls`; `dataset_base_urls` remains available for dataset-specific URL overrides.
 - Invalid config value types now fail fast instead of being silently ignored.
 - Unknown config keys are ignored with a warning.
 - URLs in `provider_base_urls` and `dataset_base_urls` must be `http://` or `https://`.
