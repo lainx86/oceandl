@@ -239,7 +239,7 @@ Important download options:
 | `--no-overwrite` | Force overwrite off for this run | Overrides config |
 | `--resume` | Allow resume from `.part` files | Enabled by default |
 | `--no-resume` | Disable partial resume and start clean | Useful for debugging or when you do not trust partial state |
-| `--timeout SECONDS` | Set HTTP request timeout | Must be finite and greater than zero |
+| `--timeout SECONDS` | Set HTTP stall timeout for downloads | Must be finite and greater than zero |
 | `--chunk-size BYTES` | Set the requested `libcurl` receive buffer size | Minimum `1024`; default `1048576` |
 | `--retries N` | Retry transient failures | Allowed range `0..10` |
 | `--help`, `-h` | Show help for `download` | Does not start a download |

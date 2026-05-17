@@ -12,6 +12,7 @@ import shutil
 import subprocess
 import sys
 import threading
+import time
 import traceback
 import urllib.parse
 
@@ -20,9 +21,16 @@ DATASET_ID = "gpcp"
 FILE_NAME = "precip.mon.mean.nc"
 RESOURCE_BASE_PATH = f"/fixtures/{DATASET_ID}"
 RESOURCE_PATH = f"{RESOURCE_BASE_PATH}/{FILE_NAME}"
+SLOW_ACTIVE_BASE_PATH = f"/fixtures-slow-active/{DATASET_ID}"
+SLOW_ACTIVE_PATH = f"{SLOW_ACTIVE_BASE_PATH}/{FILE_NAME}"
+STALLED_BASE_PATH = f"/fixtures-stalled/{DATASET_ID}"
+STALLED_PATH = f"{STALLED_BASE_PATH}/{FILE_NAME}"
+SLOW_HEAD_BASE_PATH = f"/fixtures-slow-head/{DATASET_ID}"
+SLOW_HEAD_PATH = f"{SLOW_HEAD_BASE_PATH}/{FILE_NAME}"
 ETAG = '"fixture-v1"'
 PARTIAL_SIZE = 16
 FIXTURE_BYTES = b"CDF\x01" + (b"\x00" * 60)
+SLOW_FIXTURE_BYTES = b"CDF\x01" + (b"x" * 2044)
 
 
 class IntegrationFailure(RuntimeError):
@@ -83,34 +91,56 @@ class HermeticRequestHandler(http.server.BaseHTTPRequestHandler):
 
     def do_HEAD(self) -> None:
         self._record_request()
-        if self._request_path() != RESOURCE_PATH:
+        request_path = self._request_path()
+        if request_path == SLOW_HEAD_PATH:
+            time.sleep(2.0)
+
+        if request_path not in {
+            RESOURCE_PATH,
+            SLOW_ACTIVE_PATH,
+            STALLED_PATH,
+            SLOW_HEAD_PATH,
+        }:
             self._send_not_found()
             return
 
+        payload = SLOW_FIXTURE_BYTES if request_path != RESOURCE_PATH else FIXTURE_BYTES
         self.send_response(200)
-        self.send_header("Content-Length", str(len(FIXTURE_BYTES)))
+        self.send_header("Content-Length", str(len(payload)))
         self.send_header("Accept-Ranges", "bytes")
         self.send_header("ETag", ETAG)
-        self.end_headers()
+        try:
+            self.end_headers()
+        except (BrokenPipeError, ConnectionResetError):
+            return
 
     def do_GET(self) -> None:
         self._record_request()
-        if self._request_path() != RESOURCE_PATH:
+        request_path = self._request_path()
+        if request_path == SLOW_ACTIVE_PATH:
+            self._send_slow_active_response()
+            return
+        if request_path == STALLED_PATH:
+            self._send_stalled_response()
+            return
+
+        if request_path not in {RESOURCE_PATH, SLOW_HEAD_PATH}:
             self._send_not_found()
             return
 
+        payload = SLOW_FIXTURE_BYTES if request_path == SLOW_HEAD_PATH else FIXTURE_BYTES
         range_header = self.headers.get("Range")
         if not range_header:
             self.send_response(200)
-            self.send_header("Content-Length", str(len(FIXTURE_BYTES)))
+            self.send_header("Content-Length", str(len(payload)))
             self.send_header("Accept-Ranges", "bytes")
             self.send_header("ETag", ETAG)
             self.end_headers()
-            self.wfile.write(FIXTURE_BYTES)
+            self.wfile.write(payload)
             return
 
         try:
-            start = self._parse_open_ended_range(range_header, len(FIXTURE_BYTES))
+            start = self._parse_open_ended_range(range_header, len(payload))
         except IntegrationFailure as error:
             payload = f"{error}\n".encode("utf-8")
             self.send_response(400)
@@ -119,10 +149,10 @@ class HermeticRequestHandler(http.server.BaseHTTPRequestHandler):
             self.wfile.write(payload)
             return
 
-        body = FIXTURE_BYTES[start:]
+        body = payload[start:]
         self.send_response(206)
         self.send_header("Content-Length", str(len(body)))
-        self.send_header("Content-Range", f"bytes {start}-{len(FIXTURE_BYTES) - 1}/{len(FIXTURE_BYTES)}")
+        self.send_header("Content-Range", f"bytes {start}-{len(payload) - 1}/{len(payload)}")
         self.send_header("Accept-Ranges", "bytes")
         self.send_header("ETag", ETAG)
         self.end_headers()
@@ -151,6 +181,36 @@ class HermeticRequestHandler(http.server.BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(payload)))
         self.end_headers()
         self.wfile.write(payload)
+
+    def _send_slow_active_response(self) -> None:
+        self.send_response(200)
+        self.send_header("Content-Length", str(len(SLOW_FIXTURE_BYTES)))
+        self.send_header("Accept-Ranges", "bytes")
+        self.send_header("ETag", ETAG)
+        self.end_headers()
+
+        for index in range(0, len(SLOW_FIXTURE_BYTES), 256):
+            try:
+                self.wfile.write(SLOW_FIXTURE_BYTES[index:index + 256])
+                self.wfile.flush()
+            except (BrokenPipeError, ConnectionResetError):
+                return
+            time.sleep(0.3)
+
+    def _send_stalled_response(self) -> None:
+        self.send_response(200)
+        self.send_header("Content-Length", str(len(SLOW_FIXTURE_BYTES)))
+        self.send_header("Accept-Ranges", "bytes")
+        self.send_header("ETag", ETAG)
+        self.end_headers()
+        try:
+            self.wfile.write(SLOW_FIXTURE_BYTES[:4])
+            self.wfile.flush()
+            time.sleep(3.0)
+            self.wfile.write(SLOW_FIXTURE_BYTES[4:])
+            self.wfile.flush()
+        except (BrokenPipeError, ConnectionResetError):
+            return
 
     @staticmethod
     def _parse_open_ended_range(value: str, size: int) -> int:
@@ -181,13 +241,17 @@ def running_server(request_log: RequestLog) -> HermeticHTTPServer:
         server.server_close()
 
 
-def write_config(config_path: pathlib.Path, port: int) -> None:
+def write_config(
+    config_path: pathlib.Path,
+    port: int,
+    resource_base_path: str = RESOURCE_BASE_PATH,
+) -> None:
     config_path.write_text(
         "\n".join(
             (
                 f'default_dataset = "{DATASET_ID}"',
                 "[dataset_base_urls]",
-                f'{DATASET_ID} = "http://127.0.0.1:{port}{RESOURCE_BASE_PATH}"',
+                f'{DATASET_ID} = "http://127.0.0.1:{port}{resource_base_path}"',
                 "",
             )
         ),
@@ -225,6 +289,8 @@ def run_command(
     oceandl_path: pathlib.Path,
     config_path: pathlib.Path,
     output_dir: pathlib.Path,
+    timeout_seconds: str = "5",
+    process_timeout_seconds: int = 30,
 ) -> CommandResult:
     command = [
         str(oceandl_path),
@@ -238,7 +304,7 @@ def run_command(
         "--chunk-size",
         "1024",
         "--timeout",
-        "5",
+        timeout_seconds,
         "--retries",
         "0",
     ]
@@ -261,7 +327,7 @@ def run_command(
         command,
         capture_output=True,
         text=True,
-        timeout=30,
+        timeout=process_timeout_seconds,
         check=False,
         env=env,
     )
@@ -283,6 +349,13 @@ def require_command_success(result: CommandResult) -> None:
     require(
         result.returncode == 0,
         f"{result.name} exited with {result.returncode}",
+    )
+
+
+def require_command_failure(result: CommandResult) -> None:
+    require(
+        result.returncode != 0,
+        f"{result.name} unexpectedly exited successfully",
     )
 
 
@@ -350,6 +423,62 @@ def assert_resume_download(
     require(
         "resumed" in result.stdout,
         "resume output did not include resumed transfer details",
+    )
+
+
+def assert_slow_active_download(
+    result: CommandResult,
+    records: list[RequestRecord],
+    output_dir: pathlib.Path,
+) -> None:
+    final_path = output_dir / DATASET_ID / FILE_NAME
+    require_file_contents(final_path, SLOW_FIXTURE_BYTES)
+    require(
+        [record.method for record in records] == ["HEAD", "GET"],
+        f"unexpected request sequence for slow active download: {records}",
+    )
+    require(
+        all(record.path == SLOW_ACTIVE_PATH for record in records),
+        f"unexpected request path during slow active download: {records}",
+    )
+
+
+def assert_stalled_download_failure(
+    result: CommandResult,
+    records: list[RequestRecord],
+    output_dir: pathlib.Path,
+) -> None:
+    final_path = output_dir / DATASET_ID / FILE_NAME
+    require(not final_path.exists(), f"stalled download should not create final file: {final_path}")
+    require(
+        [record.method for record in records] == ["HEAD", "GET"],
+        f"unexpected request sequence for stalled download: {records}",
+    )
+    require(
+        all(record.path == STALLED_PATH for record in records),
+        f"unexpected request path during stalled download: {records}",
+    )
+
+
+def assert_slow_head_download(
+    result: CommandResult,
+    records: list[RequestRecord],
+    output_dir: pathlib.Path,
+    elapsed_seconds: float,
+) -> None:
+    final_path = output_dir / DATASET_ID / FILE_NAME
+    require_file_contents(final_path, SLOW_FIXTURE_BYTES)
+    require(
+        [record.method for record in records] == ["HEAD", "GET"],
+        f"unexpected request sequence for slow HEAD download: {records}",
+    )
+    require(
+        all(record.path == SLOW_HEAD_PATH for record in records),
+        f"unexpected request path during slow HEAD download: {records}",
+    )
+    require(
+        elapsed_seconds < 5.0,
+        f"slow HEAD request was not bounded by timeout; elapsed {elapsed_seconds:.2f}s",
     )
 
 
@@ -437,6 +566,64 @@ def main() -> int:
             last_records = request_log.snapshot()
             require_command_success(resume_download)
             assert_resume_download(resume_download, last_records, resume_output)
+
+            slow_active_config_path = work_dir / "slow-active-config.toml"
+            write_config(slow_active_config_path, port, SLOW_ACTIVE_BASE_PATH)
+            slow_active_output = work_dir / "slow-active-output"
+            request_log.clear()
+            slow_active_download = run_command(
+                "slow-active-download",
+                oceandl_path,
+                slow_active_config_path,
+                slow_active_output,
+                timeout_seconds="1",
+                process_timeout_seconds=15,
+            )
+            command_results.append(slow_active_download)
+            last_records = request_log.snapshot()
+            require_command_success(slow_active_download)
+            assert_slow_active_download(slow_active_download, last_records, slow_active_output)
+
+            stalled_config_path = work_dir / "stalled-config.toml"
+            write_config(stalled_config_path, port, STALLED_BASE_PATH)
+            stalled_output = work_dir / "stalled-output"
+            request_log.clear()
+            stalled_download = run_command(
+                "stalled-download",
+                oceandl_path,
+                stalled_config_path,
+                stalled_output,
+                timeout_seconds="1",
+                process_timeout_seconds=15,
+            )
+            command_results.append(stalled_download)
+            last_records = request_log.snapshot()
+            require_command_failure(stalled_download)
+            assert_stalled_download_failure(stalled_download, last_records, stalled_output)
+
+            slow_head_config_path = work_dir / "slow-head-config.toml"
+            write_config(slow_head_config_path, port, SLOW_HEAD_BASE_PATH)
+            slow_head_output = work_dir / "slow-head-output"
+            request_log.clear()
+            started_at = time.monotonic()
+            slow_head_download = run_command(
+                "slow-head-download",
+                oceandl_path,
+                slow_head_config_path,
+                slow_head_output,
+                timeout_seconds="1",
+                process_timeout_seconds=15,
+            )
+            elapsed_seconds = time.monotonic() - started_at
+            command_results.append(slow_head_download)
+            last_records = request_log.snapshot()
+            require_command_success(slow_head_download)
+            assert_slow_head_download(
+                slow_head_download,
+                last_records,
+                slow_head_output,
+                elapsed_seconds,
+            )
 
         print("Hermetic HTTP integration test passed.")
         return 0

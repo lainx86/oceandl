@@ -276,7 +276,7 @@ void print_download_help(const Reporter& reporter) {
             {"--no-overwrite", "Disable overwrite"},
             {"--resume", "Enable partial download resume"},
             {"--no-resume", "Disable resume"},
-            {"--timeout SECONDS", "HTTP request timeout"},
+            {"--timeout SECONDS", "HTTP stall timeout for downloads"},
             {"--chunk-size BYTES", "Requested libcurl HTTP receive buffer size"},
             {"--retries N", "Retry count after transient failures (0-10)"},
             {"--help, -h", "Show help for the download command"},

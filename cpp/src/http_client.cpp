@@ -18,7 +18,6 @@ namespace {
 
 constexpr double kDefaultConnectTimeoutSeconds = 15.0;
 constexpr long kLowSpeedLimitBytesPerSecond = 64;
-constexpr long kMaxLowSpeedObservationSeconds = 30;
 constexpr int kMaxRetryAfterSeconds = 300;
 
 struct CurlGlobalInit {
@@ -115,7 +114,18 @@ size_t write_callback(char* data, size_t size, size_t nmemb, void* userdata) {
     return byte_count;
 }
 
-void set_common_options(CURL* curl, const HttpRequest& request, const std::string& user_agent) {
+long timeout_seconds_to_long(double seconds) {
+    return static_cast<long>(
+        std::min(std::ceil(seconds), static_cast<double>(std::numeric_limits<long>::max()))
+    );
+}
+
+void set_common_options(
+    CURL* curl,
+    const HttpRequest& request,
+    const std::string& user_agent,
+    bool total_timeout_enabled
+) {
     if (!std::isfinite(request.timeout_seconds) || request.timeout_seconds <= 0.0) {
         throw std::invalid_argument("timeout_seconds must be finite and greater than 0.");
     }
@@ -137,7 +147,11 @@ void set_common_options(CURL* curl, const HttpRequest& request, const std::strin
     curl_easy_setopt(curl, CURLOPT_PROTOCOLS, CURLPROTO_HTTP | CURLPROTO_HTTPS);
     curl_easy_setopt(curl, CURLOPT_REDIR_PROTOCOLS, CURLPROTO_HTTP | CURLPROTO_HTTPS);
 #endif
-    curl_easy_setopt(curl, CURLOPT_TIMEOUT_MS, to_timeout_ms(request.timeout_seconds));
+    // HEAD responses should be small, but GET downloads may be large; for GET,
+    // request.timeout_seconds is enforced by low-speed stall detection below.
+    if (total_timeout_enabled) {
+        curl_easy_setopt(curl, CURLOPT_TIMEOUT_MS, to_timeout_ms(request.timeout_seconds));
+    }
     curl_easy_setopt(
         curl,
         CURLOPT_CONNECTTIMEOUT_MS,
@@ -147,13 +161,7 @@ void set_common_options(CURL* curl, const HttpRequest& request, const std::strin
     curl_easy_setopt(
         curl,
         CURLOPT_LOW_SPEED_TIME,
-        std::max<long>(
-            1,
-            std::min(
-                static_cast<long>(std::ceil(request.timeout_seconds)),
-                kMaxLowSpeedObservationSeconds
-            )
-        )
+        std::max<long>(1, timeout_seconds_to_long(request.timeout_seconds))
     );
     if (request.buffer_size_bytes != 0) {
         const auto requested_buffer_size = static_cast<long>(
@@ -222,7 +230,7 @@ RequestExecution perform_request_once(
     RequestExecution execution;
     execution.state.handler = handler;
 
-    set_common_options(curl.get(), request, user_agent);
+    set_common_options(curl.get(), request, user_agent, head_request);
 #ifdef _WIN32
     curl_easy_setopt(curl.get(), CURLOPT_IPRESOLVE, ipresolve);
 #endif
