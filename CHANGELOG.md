@@ -6,6 +6,14 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 
 ## [Unreleased]
 
+## [0.2.9] - 2026-05-17
+
+### Fixed
+
+- Resumed downloads now validate HTTP `206 Content-Range` responses before appending bytes to an existing `.part` file, preventing corrupt resumed files when a server returns the wrong byte range.
+- Download `--timeout` now behaves as a stall timeout for GET transfers instead of an unconditional total transfer deadline, so large NOAA files can continue downloading while bytes are still flowing.
+- Temporary `.part` files are now explicitly flushed and closed before promotion, and write/close failures report the affected path instead of surfacing later as confusing size or validation errors.
+
 ## [0.2.8] - 2026-04-09
 
 ### Fixed
