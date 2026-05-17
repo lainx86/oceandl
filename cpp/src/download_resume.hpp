@@ -34,9 +34,27 @@ struct PartialTransferMetadata {
     std::optional<std::string> last_modified;
 };
 
+struct ContentRange {
+    std::uint64_t start_byte = 0;
+    std::uint64_t end_byte = 0;
+    std::uint64_t total_size = 0;
+};
+
+struct ResumeRangeValidation {
+    bool valid = false;
+    std::optional<ContentRange> content_range;
+    std::string reason;
+};
+
 bool has_remote_identity(const RemoteFileMetadata& remote_metadata);
 std::optional<std::string> choose_if_range_value(const RemoteFileMetadata& remote_metadata);
+std::optional<ContentRange> parse_content_range(std::string_view value);
 std::optional<std::uint64_t> parse_content_range_total(std::string_view value);
+ResumeRangeValidation validate_resume_content_range(
+    const HttpResponse& response,
+    std::optional<std::uint64_t> remote_content_length,
+    std::uint64_t requested_start_byte
+);
 std::optional<std::uint64_t> expected_total_size(
     const HttpResponse& response,
     const RemoteFileMetadata& remote_metadata,

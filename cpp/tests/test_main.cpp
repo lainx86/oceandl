@@ -847,6 +847,92 @@ bool test_downloader_discards_partial_when_etag_changes() {
         && expect(!saw_if_range, "if-range omitted after etag mismatch");
 }
 
+struct ResumeScenarioResult {
+    DownloadSummary summary;
+    HttpRequest last_get_request;
+    int get_calls = 0;
+};
+
+ResumeScenarioResult run_resume_response_scenario(
+    const std::filesystem::path& output_dir,
+    int response_status,
+    std::optional<std::string> content_range,
+    std::optional<std::string> content_length,
+    std::optional<std::uint64_t> remote_content_length = 32
+) {
+    auto dataset = fixture_dataset();
+    auto request = fixture_request(output_dir);
+    const auto payload = valid_netcdf_bytes();
+
+    const auto part_path = output_dir / dataset.id / "fixture.nc.part";
+    const auto meta_path = output_dir / dataset.id / "fixture.nc.part.meta";
+    std::filesystem::create_directories(part_path.parent_path());
+    std::ofstream partial(part_path, std::ios::binary);
+    partial.write(payload.data(), 16);
+    partial.close();
+    write_partial_metadata_file(meta_path, remote_content_length, "\"fixture-v1\"");
+
+    HttpRequest last_get_request;
+    int get_calls = 0;
+    FakeHttpClient client;
+    client.on_head = [&](const HttpRequest&) {
+        return HttpResponse{};
+    };
+    client.on_get = [&](const HttpRequest& request, ResponseHandler& handler) {
+        ++get_calls;
+        last_get_request = request;
+
+        HeaderMap headers;
+        if (content_range.has_value()) {
+            headers["content-range"] = *content_range;
+        }
+        if (content_length.has_value()) {
+            headers["content-length"] = *content_length;
+        }
+
+        handler.on_response_start(
+            HttpResponse{
+                .status_code = response_status,
+                .headers = headers,
+                .bytes_transferred = 0,
+            }
+        );
+
+        const bool full_response = response_status == 200;
+        const char* body_data = full_response ? payload.data() : payload.data() + 16;
+        const auto body_size = full_response ? payload.size() : payload.size() - 16;
+        handler.on_chunk(std::string_view(body_data, body_size));
+        return HttpResponse{
+            .status_code = response_status,
+            .headers = headers,
+            .bytes_transferred = body_size,
+        };
+    };
+
+    std::ostringstream out;
+    std::ostringstream err;
+    Reporter reporter(out, err, Verbosity::Quiet);
+    Downloader downloader(client, reporter);
+    FixtureProvider provider(fixture_remote_metadata(remote_content_length, true, "\"fixture-v1\""));
+
+    return {
+        .summary = downloader.download(request, dataset, provider),
+        .last_get_request = last_get_request,
+        .get_calls = get_calls,
+    };
+}
+
+bool expect_resume_partial_preserved(const std::filesystem::path& output_dir, const std::string& label) {
+    const auto part_path = output_dir / "fixture" / "fixture.nc.part";
+    const auto meta_path = output_dir / "fixture" / "fixture.nc.part.meta";
+    std::error_code error;
+    const auto part_size = std::filesystem::file_size(part_path, error);
+    return expect(std::filesystem::exists(part_path), label + " part exists")
+        && expect(!error, label + " part size readable")
+        && expect(part_size == 16, label + " part size preserved")
+        && expect(std::filesystem::exists(meta_path), label + " metadata exists");
+}
+
 bool test_downloader_sends_if_range_when_resuming() {
     TempDir temp_dir;
     auto dataset = fixture_dataset();
@@ -917,6 +1003,115 @@ bool test_downloader_sends_if_range_when_resuming() {
             request_header_value(last_get_request, "If-Range: ") == "\"fixture-v1\"",
             "if-range header sent"
         );
+}
+
+bool test_downloader_accepts_valid_resumed_content_range() {
+    TempDir temp_dir;
+    const auto result =
+        run_resume_response_scenario(temp_dir.path(), 206, "bytes 16-31/32", "16");
+    const auto final_path = temp_dir.path() / "fixture" / "fixture.nc";
+    const auto validation = validate_netcdf_file(final_path, 32);
+
+    return expect(result.summary.downloaded_count() == 1, "valid resumed Content-Range downloads")
+        && expect(result.summary.results.at(0).resumed, "valid resumed Content-Range marks resume")
+        && expect(request_has_header_prefix(result.last_get_request, "Range: bytes=16-"), "valid resume sent Range")
+        && expect(validation.valid, "valid resumed Content-Range final file validates");
+}
+
+bool test_downloader_rejects_resumed_206_without_content_range() {
+    TempDir temp_dir;
+    const auto result = run_resume_response_scenario(temp_dir.path(), 206, std::nullopt, "16");
+
+    return expect(result.summary.failed_count() == 1, "missing Content-Range fails")
+        && expect_contains(
+            result.summary.failures().at(0).error_message,
+            "missing Content-Range",
+            "missing Content-Range error message"
+        )
+        && expect_resume_partial_preserved(temp_dir.path(), "missing Content-Range");
+}
+
+bool test_downloader_rejects_resumed_206_with_wrong_content_range_start() {
+    TempDir temp_dir;
+    const auto result =
+        run_resume_response_scenario(temp_dir.path(), 206, "bytes 0-15/32", "16");
+
+    return expect(result.summary.failed_count() == 1, "wrong Content-Range start fails")
+        && expect_contains(
+            result.summary.failures().at(0).error_message,
+            "starts at byte 0 but resume requested byte 16",
+            "wrong Content-Range start error message"
+        )
+        && expect_resume_partial_preserved(temp_dir.path(), "wrong Content-Range start");
+}
+
+bool test_downloader_rejects_resumed_206_with_malformed_content_range() {
+    TempDir temp_dir;
+    const auto result =
+        run_resume_response_scenario(temp_dir.path(), 206, "bytes 16-31/*", "16");
+
+    return expect(result.summary.failed_count() == 1, "malformed Content-Range fails")
+        && expect_contains(
+            result.summary.failures().at(0).error_message,
+            "malformed Content-Range",
+            "malformed Content-Range error message"
+        )
+        && expect_resume_partial_preserved(temp_dir.path(), "malformed Content-Range");
+}
+
+bool test_downloader_rejects_resumed_206_with_unsatisfied_content_range() {
+    TempDir temp_dir;
+    const auto result =
+        run_resume_response_scenario(temp_dir.path(), 206, "bytes */32", "16");
+
+    return expect(result.summary.failed_count() == 1, "unsatisfied Content-Range fails")
+        && expect_contains(
+            result.summary.failures().at(0).error_message,
+            "unsatisfied Content-Range",
+            "unsatisfied Content-Range error message"
+        )
+        && expect_resume_partial_preserved(temp_dir.path(), "unsatisfied Content-Range");
+}
+
+bool test_downloader_rejects_resumed_206_with_content_length_mismatch() {
+    TempDir temp_dir;
+    const auto result =
+        run_resume_response_scenario(temp_dir.path(), 206, "bytes 16-31/32", "15");
+
+    return expect(result.summary.failed_count() == 1, "Content-Length mismatch fails")
+        && expect_contains(
+            result.summary.failures().at(0).error_message,
+            "does not match Content-Range span",
+            "Content-Length mismatch error message"
+        )
+        && expect_resume_partial_preserved(temp_dir.path(), "Content-Length mismatch");
+}
+
+bool test_downloader_rejects_resumed_206_with_remote_total_mismatch() {
+    TempDir temp_dir;
+    const auto result =
+        run_resume_response_scenario(temp_dir.path(), 206, "bytes 16-31/64", "16", 32);
+
+    return expect(result.summary.failed_count() == 1, "remote total mismatch fails")
+        && expect_contains(
+            result.summary.failures().at(0).error_message,
+            "does not match remote metadata size",
+            "remote total mismatch error message"
+        )
+        && expect_resume_partial_preserved(temp_dir.path(), "remote total mismatch");
+}
+
+bool test_downloader_restarts_when_resumed_request_receives_200() {
+    TempDir temp_dir;
+    const auto result =
+        run_resume_response_scenario(temp_dir.path(), 200, std::nullopt, "32");
+    const auto final_path = temp_dir.path() / "fixture" / "fixture.nc";
+    const auto validation = validate_netcdf_file(final_path, 32);
+
+    return expect(result.summary.downloaded_count() == 1, "resume 200 restart downloads")
+        && expect(!result.summary.results.at(0).resumed, "resume 200 restart not marked resumed")
+        && expect(validation.valid, "resume 200 restart final file validates")
+        && expect(!std::filesystem::exists(temp_dir.path() / "fixture" / "fixture.nc.part"), "resume 200 restart removes part");
 }
 
 bool test_downloader_fails_when_target_is_locked() {
@@ -1854,6 +2049,14 @@ int main() {
         {"downloader_discards_partial_when_ranges_unavailable", test_downloader_discards_partial_when_ranges_unavailable},
         {"downloader_discards_partial_when_etag_changes", test_downloader_discards_partial_when_etag_changes},
         {"downloader_sends_if_range_when_resuming", test_downloader_sends_if_range_when_resuming},
+        {"downloader_accepts_valid_resumed_content_range", test_downloader_accepts_valid_resumed_content_range},
+        {"downloader_rejects_resumed_206_without_content_range", test_downloader_rejects_resumed_206_without_content_range},
+        {"downloader_rejects_resumed_206_with_wrong_content_range_start", test_downloader_rejects_resumed_206_with_wrong_content_range_start},
+        {"downloader_rejects_resumed_206_with_malformed_content_range", test_downloader_rejects_resumed_206_with_malformed_content_range},
+        {"downloader_rejects_resumed_206_with_unsatisfied_content_range", test_downloader_rejects_resumed_206_with_unsatisfied_content_range},
+        {"downloader_rejects_resumed_206_with_content_length_mismatch", test_downloader_rejects_resumed_206_with_content_length_mismatch},
+        {"downloader_rejects_resumed_206_with_remote_total_mismatch", test_downloader_rejects_resumed_206_with_remote_total_mismatch},
+        {"downloader_restarts_when_resumed_request_receives_200", test_downloader_restarts_when_resumed_request_receives_200},
         {"downloader_fails_when_target_is_locked", test_downloader_fails_when_target_is_locked},
         {"downloader_recovers_legacy_lock_directory_without_peer_process", test_downloader_recovers_legacy_lock_directory_without_peer_process},
 #ifndef _WIN32

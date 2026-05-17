@@ -111,16 +111,31 @@ class FileResponseHandler final : public ResponseHandler {
         }
 
         active_start_byte_ = append ? initial_start_byte_ : 0;
-        total_size_ = expected_total_size(
-            response,
-            RemoteFileMetadata{
-                .content_length = remote_content_length_,
-                .accepts_ranges = std::nullopt,
-                .etag = std::nullopt,
-                .last_modified = std::nullopt,
-            },
-            active_start_byte_
-        );
+        if (append) {
+            const auto validation =
+                validate_resume_content_range(response, remote_content_length_, initial_start_byte_);
+            if (!validation.valid || !validation.content_range.has_value()) {
+                throw std::runtime_error(
+                    fmt::format(
+                        "unsafe resumed response for {}: {}",
+                        target_.file_name,
+                        validation.reason
+                    )
+                );
+            }
+            total_size_ = validation.content_range->total_size;
+        } else {
+            total_size_ = expected_total_size(
+                response,
+                RemoteFileMetadata{
+                    .content_length = remote_content_length_,
+                    .accepts_ranges = std::nullopt,
+                    .etag = std::nullopt,
+                    .last_modified = std::nullopt,
+                },
+                active_start_byte_
+            );
+        }
         resumed_transfer_ = append;
 
         std::ios::openmode mode = std::ios::binary | std::ios::out;
