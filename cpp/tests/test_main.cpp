@@ -2308,7 +2308,7 @@ bool test_cli_rejects_unknown_cm_subcommand() {
 bool test_cli_cm_doctor_reports_missing_tool() {
     TempDir temp_dir;
     ScopedEnvVar cm_bin("OCEANDL_CM_BIN", std::nullopt);
-    ScopedEnvVar path("PATH", std::string(""));
+    ScopedEnvVar path("PATH", temp_dir.path().string());
 #ifdef _WIN32
     ScopedEnvVar local_app_data("LOCALAPPDATA", temp_dir.path().string());
 #else

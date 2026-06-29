@@ -144,7 +144,32 @@ std::string format_windows_error(DWORD code) {
 
     std::wstring wide_message(buffer, length);
     LocalFree(buffer);
-    std::string message(wide_message.begin(), wide_message.end());
+    int utf8_length = WideCharToMultiByte(
+        CP_UTF8,
+        0,
+        wide_message.data(),
+        static_cast<int>(wide_message.size()),
+        nullptr,
+        0,
+        nullptr,
+        nullptr
+    );
+    std::string message;
+    if (utf8_length > 0) {
+        message.resize(static_cast<std::size_t>(utf8_length));
+        (void)WideCharToMultiByte(
+            CP_UTF8,
+            0,
+            wide_message.data(),
+            static_cast<int>(wide_message.size()),
+            message.data(),
+            utf8_length,
+            nullptr,
+            nullptr
+        );
+    } else {
+        message = "Windows error " + std::to_string(static_cast<unsigned long>(code));
+    }
     while (!message.empty() && (message.back() == '\n' || message.back() == '\r')) {
         message.pop_back();
     }
