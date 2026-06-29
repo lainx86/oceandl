@@ -118,7 +118,16 @@ jobs:
           if (-not $env:VCPKG_ROOT) {
             throw "VCPKG_ROOT is not set."
           }
-          cmake -S . -B build -G "Visual Studio 17 2022" -A x64 `
+
+          $vswhere = Join-Path ${env:ProgramFiles(x86)} "Microsoft Visual Studio\Installer\vswhere.exe"
+          $vsVersion = & $vswhere -latest -products * -requires Microsoft.Component.MSBuild -property installationVersion
+          if (-not $vsVersion) {
+            throw "Visual Studio with MSBuild was not found."
+          }
+
+          $vsMajor = [int]($vsVersion.Split(".")[0])
+          $generator = if ($vsMajor -ge 18) { "Visual Studio 18 2026" } else { "Visual Studio 17 2022" }
+          cmake -S . -B build -G $generator -A x64 `
             -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_ROOT\scripts\buildsystems\vcpkg.cmake" `
             -DVCPKG_TARGET_TRIPLET=x64-windows-static
 
