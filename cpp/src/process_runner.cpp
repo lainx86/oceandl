@@ -264,7 +264,22 @@ bool drain_pipe_output(int fd, std::string& output) {
 void write_exec_error(const std::string& executable) {
     const std::string message =
         "failed to start " + executable + ": " + std::strerror(errno) + "\n";
-    (void)::write(STDERR_FILENO, message.data(), message.size());
+    const char* cursor = message.data();
+    std::size_t remaining = message.size();
+    while (remaining > 0) {
+        const auto written = ::write(STDERR_FILENO, cursor, remaining);
+        if (written < 0) {
+            if (errno == EINTR) {
+                continue;
+            }
+            return;
+        }
+        if (written == 0) {
+            return;
+        }
+        cursor += written;
+        remaining -= static_cast<std::size_t>(written);
+    }
 }
 
 #endif
