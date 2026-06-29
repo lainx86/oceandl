@@ -2684,6 +2684,9 @@ int main() {
 
     bool ok = true;
     for (const auto& [name, test] : tests) {
+        if (std::getenv("OCEANDL_TEST_TRACE") != nullptr) {
+            std::cerr << "Running test: " << name << '\n' << std::flush;
+        }
         if (!test()) {
             std::cerr << "Test failed: " << name << '\n';
             ok = false;

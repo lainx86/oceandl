@@ -154,6 +154,8 @@ jobs:
 
       - name: Run tests
         shell: pwsh
+        env:
+          OCEANDL_TEST_TRACE: "1"
         run: ctest --test-dir build --build-config Release --output-on-failure
 
       - name: CLI smoke test
