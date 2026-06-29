@@ -2035,15 +2035,16 @@ bool test_config_load_reports_unknown_keys() {
 bool test_config_loads_copernicusmarine_table() {
     TempDir temp_dir;
     const auto config_path = temp_dir.path() / "config.toml";
+    const auto executable_path = temp_dir.path() / "copernicusmarine";
     std::ofstream config(config_path);
     config << "[copernicusmarine]\n";
-    config << "executable = \"" << (temp_dir.path() / "copernicusmarine").string() << "\"\n";
+    config << "executable = \"" << executable_path.generic_string() << "\"\n";
     config << "runner = \"system\"\n";
     config.close();
 
     const auto loaded = load_config_with_diagnostics(config_path);
     return expect(
-            loaded.config.copernicusmarine.executable == temp_dir.path() / "copernicusmarine",
+            loaded.config.copernicusmarine.executable == executable_path,
             "copernicusmarine executable loaded"
         )
         && expect(
