@@ -29,6 +29,7 @@ What that means in practice:
 - Platform-aware default output root (`~/data/oceandl` on Linux, `%LOCALAPPDATA%\\oceandl\\data` on Windows)
 - `oceandl --version`, `providers`, `datasets`, `info`, and `download`
 - `oceandl --help` and `<command> --help`
+- Alpha `oceandl cm ...` wrapper commands for the official Copernicus Marine Toolbox
 - Resume from `.part` files when the server supports `Range`
 - Safe fallback to a full re-download when resume is unavailable
 - Skip valid final files
@@ -159,6 +160,7 @@ If you are running from the build tree instead, replace `oceandl` with `./build/
 | `oceandl datasets` | List the built-in dataset catalog | You want available dataset IDs before downloading |
 | `oceandl info <dataset>` | Show detailed metadata for one dataset | You want mode, file naming, base URL, and year support |
 | `oceandl download [dataset]` | Download one dataset | You want to fetch files using config defaults plus CLI overrides |
+| `oceandl cm <command>` | Use the Copernicus Marine Toolbox wrapper | You want Copernicus Marine data through the official toolbox CLI |
 | `oceandl help <command>` | Show help for one command | You want command-specific syntax and options |
 
 ### Global flags
@@ -225,7 +227,66 @@ Ask the tool for command-specific help:
 ```bash
 oceandl help download
 oceandl help info
+oceandl help cm
 ```
+
+### Copernicus Marine wrapper
+
+`oceandl cm` is an alpha, unofficial wrapper around the official Copernicus Marine Toolbox command, `copernicusmarine`. NOAA PSL native downloads remain separate under `oceandl download`.
+
+You still need a Copernicus Marine account. Credentials are handled by the official `copernicusmarine login` command and its own files; `oceandl` does not store Copernicus usernames or passwords in its config.
+
+Recommended simple flow:
+
+```bash
+oceandl cm setup
+oceandl cm login
+oceandl cm subset --help
+```
+
+`oceandl cm setup` looks for an existing `copernicusmarine` command on `PATH` and saves it to the OceanDL config. If the toolbox is installed somewhere else, point OceanDL at it:
+
+```bash
+oceandl cm setup --executable /path/to/copernicusmarine
+oceandl cm doctor
+```
+
+Advanced users who already keep the toolbox in a named environment can save a runner instead:
+
+```bash
+oceandl cm setup --runner micromamba --env copernicusmarine
+oceandl cm setup --runner conda --env copernicusmarine
+```
+
+Forwarded commands:
+
+```bash
+oceandl cm login
+oceandl cm describe --help
+oceandl cm get --help
+oceandl cm subset --help
+```
+
+Subset example:
+
+```bash
+oceandl cm subset \
+  --dataset-id cmems_mod_glo_phy_my_0.083deg_P1D-m \
+  --variable so \
+  --variable thetao \
+  --variable uo \
+  --variable vo \
+  --start-datetime 2025-01-01T00:00:00 \
+  --end-datetime 2025-12-31T00:00:00 \
+  --minimum-longitude 132.43732068838182 \
+  --maximum-longitude 137.00306480805972 \
+  --minimum-latitude -10.641552392478912 \
+  --maximum-latitude -7.57981810045961 \
+  --minimum-depth 0.49402499198913574 \
+  --maximum-depth 222.47520446777344
+```
+
+OceanDL does not reimplement Copernicus Marine APIs. It resolves the toolbox command, then forwards `login`, `describe`, `get`, and `subset` arguments to the official CLI.
 
 ### Download command details
 
@@ -306,6 +367,10 @@ resume = true
 
 [provider_base_urls]
 psl = "https://downloads.psl.noaa.gov"
+
+[copernicusmarine]
+runner = "system"
+executable = "/absolute/path/to/copernicusmarine"
 ```
 
 All CLI flags still override the config file.
@@ -317,6 +382,7 @@ Notes:
 - Unknown config keys are ignored with a warning.
 - URLs in `provider_base_urls` and `dataset_base_urls` must be `http://` or `https://`.
 - `retry_count` must be an integer in the range `0..10`.
+- Copernicus Marine config stores only runner metadata such as `runner`, `env`, or `executable`; credentials stay with the official toolbox.
 
 ## Reliability policy
 
@@ -344,6 +410,8 @@ Notes:
   This is SmartScreen. Verify the file came from the expected GitHub Release, check `SHA256SUMS`, then use the normal Windows trust flow if you want to run it.
 - `'oceandl' is not recognized as an internal or external command`:
   Run `oceandl.exe` from the extracted `bin\` directory directly, or add that directory to `PATH`.
+- `Copernicus Marine Toolbox was not found`:
+  Run `oceandl cm setup`, or configure an installed toolbox with `oceandl cm setup --executable /path/to/copernicusmarine`.
 
 ## Output layout
 
@@ -492,6 +560,10 @@ Windows run-from-build-tree example:
   `libcurl`-based HTTP transport.
 - `cpp/src/config.cpp`
   TOML config loader.
+- `cpp/src/copernicusmarine.cpp`
+  Copernicus Marine Toolbox command resolution, setup, doctor, and passthrough wrapper.
+- `cpp/src/process_runner.cpp`
+  Cross-platform subprocess execution without shell command strings.
 - `cpp/src/validation.cpp`
   Lightweight NetCDF validation.
 

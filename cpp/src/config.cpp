@@ -3,9 +3,11 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <fstream>
 #include <limits>
 #include <optional>
 #include <stdexcept>
+#include <string_view>
 
 #include <fmt/format.h>
 #include <toml++/toml.hpp>
@@ -113,7 +115,7 @@ std::map<std::string, std::string> parse_string_map_or_throw(
 }
 
 std::vector<std::string> collect_unknown_key_warnings(const toml::table& table) {
-    static constexpr std::array<std::string_view, 9> kKnownKeys = {
+    static constexpr std::array<std::string_view, 10> kKnownKeys = {
         "default_dataset",
         "default_output_dir",
         "timeout",
@@ -123,6 +125,7 @@ std::vector<std::string> collect_unknown_key_warnings(const toml::table& table) 
         "resume",
         "user_agent",
         "provider_base_urls",
+        "copernicusmarine",
     };
     static constexpr std::array<std::string_view, 1> kKnownLegacyKeys = {
         "dataset_base_urls",
@@ -156,6 +159,35 @@ std::map<std::string, std::string> default_provider_base_urls() {
     return builtin_provider_base_urls();
 }
 
+std::string copernicusmarine_runner_name(CopernicusMarineRunner runner) {
+    switch (runner) {
+        case CopernicusMarineRunner::System:
+            return "system";
+        case CopernicusMarineRunner::Micromamba:
+            return "micromamba";
+        case CopernicusMarineRunner::Conda:
+            return "conda";
+    }
+
+    throw std::invalid_argument("unknown Copernicus Marine runner.");
+}
+
+CopernicusMarineRunner parse_copernicusmarine_runner(std::string_view value) {
+    const auto normalized = to_lower(trim(value));
+    if (normalized == "system") {
+        return CopernicusMarineRunner::System;
+    }
+    if (normalized == "micromamba") {
+        return CopernicusMarineRunner::Micromamba;
+    }
+    if (normalized == "conda") {
+        return CopernicusMarineRunner::Conda;
+    }
+    throw std::invalid_argument(
+        "config 'copernicusmarine.runner' must be one of: system, micromamba, conda."
+    );
+}
+
 AppConfig default_app_config() {
     AppConfig config;
     config.default_output_dir = default_output_dir();
@@ -163,6 +195,33 @@ AppConfig default_app_config() {
     config.provider_base_urls = default_provider_base_urls();
     config.normalize_and_validate();
     return config;
+}
+
+void CopernicusMarineConfig::normalize_and_validate() {
+    if (!executable.empty()) {
+        executable = expand_user(executable);
+    }
+    env = trim(env);
+
+    if (runner == CopernicusMarineRunner::System) {
+        if (!env.empty()) {
+            throw std::invalid_argument(
+                "copernicusmarine.env is only valid with the micromamba or conda runner."
+            );
+        }
+        return;
+    }
+
+    if (!executable.empty()) {
+        throw std::invalid_argument(
+            "copernicusmarine.executable is only valid with runner = \"system\"."
+        );
+    }
+    if (env.empty()) {
+        throw std::invalid_argument(
+            "copernicusmarine.env must not be empty when runner is micromamba or conda."
+        );
+    }
 }
 
 void AppConfig::normalize_and_validate() {
@@ -216,6 +275,7 @@ void AppConfig::normalize_and_validate() {
 
     provider_base_urls = normalize_url_map(provider_base_urls, "provider_base_urls");
     dataset_base_urls = normalize_url_map(dataset_base_urls, "dataset_base_urls");
+    copernicusmarine.normalize_and_validate();
 }
 
 ConfigLoadResult load_config_with_diagnostics(const std::filesystem::path& path) {
@@ -273,6 +333,21 @@ ConfigLoadResult load_config_with_diagnostics(const std::filesystem::path& path)
         for (const auto& [key, value] : parse_string_map_or_throw(table, "dataset_base_urls")) {
             result.config.dataset_base_urls[key] = value;
         }
+
+        if (const auto* cm_table = parse_table_or_throw(table, "copernicusmarine")) {
+            if (const auto value =
+                    parse_scalar_or_throw<std::string>(*cm_table, "executable", "string")) {
+                result.config.copernicusmarine.executable = *value;
+            }
+            if (const auto value =
+                    parse_scalar_or_throw<std::string>(*cm_table, "runner", "string")) {
+                result.config.copernicusmarine.runner = parse_copernicusmarine_runner(*value);
+            }
+            if (const auto value =
+                    parse_scalar_or_throw<std::string>(*cm_table, "env", "string")) {
+                result.config.copernicusmarine.env = *value;
+            }
+        }
     } catch (const toml::parse_error& error) {
         throw std::invalid_argument(
             fmt::format("failed to parse config {}: {}", config_path.string(), error.description())
@@ -285,6 +360,52 @@ ConfigLoadResult load_config_with_diagnostics(const std::filesystem::path& path)
 
 AppConfig load_config(const std::filesystem::path& path) {
     return load_config_with_diagnostics(path).config;
+}
+
+void save_copernicusmarine_config(
+    const std::filesystem::path& path,
+    const CopernicusMarineConfig& config
+) {
+    auto normalized = config;
+    normalized.normalize_and_validate();
+
+    const auto config_path = expand_user(path);
+    toml::table table;
+    if (std::filesystem::exists(config_path)) {
+        try {
+            table = toml::parse_file(config_path.string());
+        } catch (const toml::parse_error& error) {
+            throw std::invalid_argument(
+                fmt::format(
+                    "failed to parse config {}: {}",
+                    config_path.string(),
+                    error.description()
+                )
+            );
+        }
+    }
+
+    toml::table cm_table;
+    cm_table.insert_or_assign("runner", copernicusmarine_runner_name(normalized.runner));
+    if (normalized.runner == CopernicusMarineRunner::System && !normalized.executable.empty()) {
+        cm_table.insert_or_assign("executable", normalized.executable.string());
+    }
+    if (normalized.runner != CopernicusMarineRunner::System) {
+        cm_table.insert_or_assign("env", normalized.env);
+    }
+    table.insert_or_assign("copernicusmarine", cm_table);
+
+    if (!config_path.parent_path().empty()) {
+        std::filesystem::create_directories(config_path.parent_path());
+    }
+    std::ofstream output(config_path, std::ios::binary | std::ios::trunc);
+    if (!output) {
+        throw std::runtime_error("failed to open config for writing: " + config_path.string());
+    }
+    output << table << '\n';
+    if (!output) {
+        throw std::runtime_error("failed to write config: " + config_path.string());
+    }
 }
 
 }  // namespace oceandl

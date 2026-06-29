@@ -2,11 +2,13 @@
 
 #include <algorithm>
 #include <filesystem>
+#include <optional>
 #include <stdexcept>
 
 #include <fmt/format.h>
 
 #include "download_command.hpp"
+#include "oceandl/copernicusmarine.hpp"
 #include "oceandl/utils.hpp"
 #include "oceandl/version.hpp"
 
@@ -22,6 +24,24 @@ bool any_help_token(const std::vector<std::string>& args) {
     return std::any_of(args.begin(), args.end(), [](const std::string& token) {
         return is_help_token(token);
     });
+}
+
+std::optional<std::string> first_cm_subcommand(const std::vector<std::string>& args) {
+    for (std::size_t index = 0; index < args.size(); ++index) {
+        const auto& token = args[index];
+        if (token == "--executable") {
+            ++index;
+            continue;
+        }
+        if (is_help_token(token) || token == "help") {
+            return std::nullopt;
+        }
+        if (!token.empty() && token.front() == '-') {
+            return std::nullopt;
+        }
+        return token;
+    }
+    return std::nullopt;
 }
 
 using KeyValueRows = std::vector<std::pair<std::string, std::string>>;
@@ -239,6 +259,19 @@ RuntimeRequirement classify_runtime_requirement(const std::vector<std::string>& 
     if (command == "help") {
         return RuntimeRequirement::None;
     }
+    if (command == "cm") {
+        if (command_args.empty()) {
+            return RuntimeRequirement::None;
+        }
+        if (command_args.size() == 1 && (is_help_token(command_args.front()) || command_args.front() == "help")) {
+            return RuntimeRequirement::None;
+        }
+        const auto subcommand = first_cm_subcommand(command_args);
+        if (subcommand == "setup") {
+            return any_help_token(command_args) ? RuntimeRequirement::None : RuntimeRequirement::Required;
+        }
+        return RuntimeRequirement::Optional;
+    }
     if (command == "download") {
         return any_help_token(command_args) ? RuntimeRequirement::None : RuntimeRequirement::Required;
     }
@@ -279,7 +312,7 @@ CliRuntime load_cli_runtime(const std::filesystem::path& config_path) {
 void print_help(const Reporter& reporter) {
     reporter.section(
         fmt::format("oceandl {}", kVersion),
-        "C++ CLI for downloading NetCDF datasets from NOAA PSL.",
+        "C++ CLI for NOAA PSL downloads and Copernicus Marine wrapper commands.",
         true
     );
     reporter.blank_line(true);
@@ -300,6 +333,7 @@ void print_help(const Reporter& reporter) {
             {"datasets", "List the built-in dataset catalog"},
             {"info <dataset>", "Show detailed metadata for a dataset"},
             {"download [dataset]", "Download a dataset using the current config and flags"},
+            {"cm <command>", "Use the Copernicus Marine Toolbox wrapper"},
             {"help [command]", "Show general help or command-specific help"},
         },
         reporter
@@ -322,6 +356,7 @@ void print_help(const Reporter& reporter) {
     reporter.print("  oceandl --help", true);
     reporter.print("  oceandl datasets", true);
     reporter.print("  oceandl download --help", true);
+    reporter.print("  oceandl cm --help", true);
     reporter.print("  oceandl info oisst", true);
     reporter.print("  oceandl download oisst --start-year 2024 --end-year 2025", true);
 }
@@ -363,6 +398,10 @@ int run_command(
         }
         if (help_target == "download") {
             print_download_help(reporter);
+            return 0;
+        }
+        if (help_target == "cm") {
+            print_copernicusmarine_help(reporter);
             return 0;
         }
         throw CliError("Help is not available for unknown command: " + help_target, 2);
@@ -417,6 +456,15 @@ int run_command(
             runtime.config,
             runtime.dataset_registry,
             runtime.provider_registry,
+            reporter
+        );
+    }
+
+    if (command == "cm") {
+        return handle_copernicusmarine_command(
+            command_args,
+            runtime.config,
+            runtime.config_path,
             reporter
         );
     }

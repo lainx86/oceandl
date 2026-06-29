@@ -4,6 +4,7 @@
 /dist
 /dist-*
 /.codex
+/AGENTS.md
 /__cmake_systeminformation/
 /vcpkg_installed/
 /.vs/

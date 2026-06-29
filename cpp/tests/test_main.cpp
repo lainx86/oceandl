@@ -21,6 +21,7 @@
 #include "oceandl/catalog.hpp"
 #include "oceandl/cli.hpp"
 #include "oceandl/config.hpp"
+#include "oceandl/copernicusmarine.hpp"
 #include "oceandl/downloader.hpp"
 #include "oceandl/http_client.hpp"
 #include "oceandl/models.hpp"
@@ -310,6 +311,41 @@ bool expect_contains(
 ) {
     return expect(haystack.find(needle) != std::string::npos, message);
 }
+
+std::string read_text_file(const std::filesystem::path& path) {
+    std::ifstream input(path, std::ios::binary);
+    std::ostringstream contents;
+    contents << input.rdbuf();
+    return contents.str();
+}
+
+#ifndef _WIN32
+std::filesystem::path write_fake_copernicusmarine(
+    const std::filesystem::path& directory,
+    const std::filesystem::path& record_path
+) {
+    const auto script_path = directory / "copernicusmarine";
+    std::ofstream script(script_path, std::ios::binary | std::ios::trunc);
+    script << "#!/bin/sh\n";
+    script << "if [ \"$1\" = \"--version\" ]; then\n";
+    script << "  echo 'copernicusmarine 2.0.0'\n";
+    script << "  exit 0\n";
+    script << "fi\n";
+    script << ": > '" << record_path.string() << "'\n";
+    script << "for arg in \"$@\"; do\n";
+    script << "  printf '%s\\n' \"$arg\" >> '" << record_path.string() << "'\n";
+    script << "done\n";
+    script << "exit 0\n";
+    script.close();
+    std::filesystem::permissions(
+        script_path,
+        std::filesystem::perms::owner_exec | std::filesystem::perms::owner_read
+            | std::filesystem::perms::owner_write,
+        std::filesystem::perm_options::add
+    );
+    return script_path;
+}
+#endif
 
 void write_partial_metadata_file(
     const std::filesystem::path& path,
@@ -1996,6 +2032,146 @@ bool test_config_load_reports_unknown_keys() {
         && expect_contains(loaded.warnings.front(), "unknown_key", "unknown key warning contains key name");
 }
 
+bool test_config_loads_copernicusmarine_table() {
+    TempDir temp_dir;
+    const auto config_path = temp_dir.path() / "config.toml";
+    std::ofstream config(config_path);
+    config << "[copernicusmarine]\n";
+    config << "executable = \"" << (temp_dir.path() / "copernicusmarine").string() << "\"\n";
+    config << "runner = \"system\"\n";
+    config.close();
+
+    const auto loaded = load_config_with_diagnostics(config_path);
+    return expect(
+            loaded.config.copernicusmarine.executable == temp_dir.path() / "copernicusmarine",
+            "copernicusmarine executable loaded"
+        )
+        && expect(
+            loaded.config.copernicusmarine.runner == CopernicusMarineRunner::System,
+            "copernicusmarine system runner loaded"
+        )
+        && expect(loaded.warnings.empty(), "copernicusmarine table is a known config key");
+}
+
+bool test_config_loads_copernicusmarine_micromamba_runner() {
+    TempDir temp_dir;
+    const auto config_path = temp_dir.path() / "config.toml";
+    std::ofstream config(config_path);
+    config << "[copernicusmarine]\n";
+    config << "runner = \"micromamba\"\n";
+    config << "env = \"copernicusmarine\"\n";
+    config.close();
+
+    ScopedEnvVar cm_bin("OCEANDL_CM_BIN", std::nullopt);
+    const auto loaded = load_config(config_path);
+    const auto command = resolve_copernicusmarine_command(loaded);
+    return expect(
+            loaded.copernicusmarine.runner == CopernicusMarineRunner::Micromamba,
+            "micromamba runner loaded"
+        )
+        && expect(loaded.copernicusmarine.env == "copernicusmarine", "micromamba env loaded")
+        && expect(command.has_value(), "micromamba command resolves from config")
+        && expect(command->prefix_args.size() == 4, "micromamba prefix arg count")
+        && expect(command->prefix_args[0] == "run", "micromamba prefix run")
+        && expect(command->prefix_args[1] == "-n", "micromamba prefix env flag")
+        && expect(command->prefix_args[2] == "copernicusmarine", "micromamba prefix env name")
+        && expect(command->prefix_args[3] == "copernicusmarine", "micromamba prefix tool name");
+}
+
+bool test_config_rejects_invalid_copernicusmarine_type() {
+    TempDir temp_dir;
+    const auto config_path = temp_dir.path() / "config.toml";
+    std::ofstream config(config_path);
+    config << "[copernicusmarine]\n";
+    config << "env = 123\n";
+    config.close();
+
+    try {
+        (void)load_config(config_path);
+        return expect(false, "invalid copernicusmarine env type should fail");
+    } catch (const std::exception& error) {
+        return expect_contains(
+            error.what(),
+            "config 'env' must be a string",
+            "invalid copernicusmarine env type message"
+        );
+    }
+}
+
+bool test_copernicusmarine_resolver_uses_environment_variable() {
+    TempDir temp_dir;
+    const auto executable = temp_dir.path() / "cm-bin";
+    ScopedEnvVar cm_bin("OCEANDL_CM_BIN", executable.string());
+
+    const auto command = resolve_copernicusmarine_command(default_app_config());
+    return expect(command.has_value(), "cm resolver returns env command")
+        && expect(command->executable == executable, "cm resolver uses OCEANDL_CM_BIN")
+        && expect(command->source == "OCEANDL_CM_BIN", "cm resolver reports env source")
+        && expect(command->prefix_args.empty(), "cm env command has no prefix args");
+}
+
+bool test_copernicusmarine_resolver_uses_config_executable() {
+    TempDir temp_dir;
+    auto config = default_app_config();
+    config.copernicusmarine.executable = temp_dir.path() / "copernicusmarine";
+    config.normalize_and_validate();
+    ScopedEnvVar cm_bin("OCEANDL_CM_BIN", std::nullopt);
+
+    const auto command = resolve_copernicusmarine_command(config);
+    return expect(command.has_value(), "cm resolver returns config command")
+        && expect(
+            command->executable == temp_dir.path() / "copernicusmarine",
+            "cm resolver uses config executable"
+        )
+        && expect(command->source == "config", "cm resolver reports config source");
+}
+
+bool test_copernicusmarine_builds_subset_passthrough_args() {
+    CopernicusMarineCommand command{
+        .executable = "/tmp/fake-copernicusmarine",
+        .prefix_args = {},
+        .source = "test",
+        .runner = CopernicusMarineRunner::System,
+    };
+    const std::vector<std::string> forwarded{
+        "subset",
+        "--dataset-id",
+        "cmems_mod_glo_phy_my_0.083deg_P1D-m",
+        "--variable",
+        "so",
+        "--variable",
+        "thetao",
+        "--minimum-longitude",
+        "132.43732068838182",
+    };
+
+    const auto process = build_copernicusmarine_process(command, forwarded);
+    return expect(process.executable == "/tmp/fake-copernicusmarine", "cm process executable")
+        && expect(process.arguments == forwarded, "cm subset args are preserved as tokens");
+}
+
+bool test_copernicusmarine_builds_runner_process_prefix() {
+    CopernicusMarineCommand command{
+        .executable = "micromamba",
+        .prefix_args = {"run", "-n", "copernicusmarine", "copernicusmarine"},
+        .source = "config",
+        .runner = CopernicusMarineRunner::Micromamba,
+    };
+
+    const auto process = build_copernicusmarine_process(command, {"subset", "--dataset-id", "fixture"});
+    const std::vector<std::string> expected{
+        "run",
+        "-n",
+        "copernicusmarine",
+        "copernicusmarine",
+        "subset",
+        "--dataset-id",
+        "fixture",
+    };
+    return expect(process.executable == "micromamba", "runner process executable")
+        && expect(process.arguments == expected, "runner prefix is prepended before forwarded args");
+}
+
 bool test_parse_retry_after_seconds_clamps_numeric_header() {
     const HeaderMap headers{
         {"retry-after", "600"},
@@ -2089,6 +2265,173 @@ bool test_cli_shows_download_help() {
         && expect_contains(out.str(), "--chunk-size BYTES", "download help lists chunk size option")
         && expect(err.str().empty(), "download help does not write errors");
 }
+
+bool test_cli_shows_cm_help() {
+    CliApp app;
+    std::ostringstream out;
+    std::ostringstream err;
+
+    const auto exit_code = app.run({"cm", "--help"}, out, err);
+
+    return expect(exit_code == 0, "cli exit code for cm help")
+        && expect_contains(out.str(), "cm command", "cm help header shown")
+        && expect_contains(out.str(), "oceandl cm subset [args...]", "cm help lists subset")
+        && expect(err.str().empty(), "cm help does not write errors");
+}
+
+bool test_cli_shows_help_cm() {
+    CliApp app;
+    std::ostringstream out;
+    std::ostringstream err;
+
+    const auto exit_code = app.run({"help", "cm"}, out, err);
+
+    return expect(exit_code == 0, "cli exit code for help cm")
+        && expect_contains(out.str(), "cm command", "help cm header shown")
+        && expect_contains(out.str(), "Copernicus Marine Toolbox", "help cm describes toolbox")
+        && expect(err.str().empty(), "help cm does not write errors");
+}
+
+bool test_cli_rejects_unknown_cm_subcommand() {
+    TempDir temp_dir;
+    CliApp app;
+    std::ostringstream out;
+    std::ostringstream err;
+
+    const auto exit_code =
+        app.run({"--config", (temp_dir.path() / "config.toml").string(), "cm", "bogus"}, out, err);
+
+    return expect(exit_code == 2, "unknown cm subcommand exit code")
+        && expect_contains(err.str(), "Unknown oceandl cm command: bogus", "unknown cm subcommand message");
+}
+
+bool test_cli_cm_doctor_reports_missing_tool() {
+    TempDir temp_dir;
+    ScopedEnvVar cm_bin("OCEANDL_CM_BIN", std::nullopt);
+    ScopedEnvVar path("PATH", std::string(""));
+#ifdef _WIN32
+    ScopedEnvVar local_app_data("LOCALAPPDATA", temp_dir.path().string());
+#else
+    ScopedEnvVar xdg_data_home("XDG_DATA_HOME", temp_dir.path().string());
+#endif
+
+    CliApp app;
+    std::ostringstream out;
+    std::ostringstream err;
+    const auto exit_code =
+        app.run({"--config", (temp_dir.path() / "config.toml").string(), "cm", "doctor"}, out, err);
+
+    return expect(exit_code == 1, "cm doctor missing tool exit code")
+        && expect_contains(err.str(), "Copernicus Marine Toolbox was not found", "cm doctor missing error")
+        && expect_contains(out.str(), "oceandl cm setup", "cm doctor suggests setup");
+}
+
+#ifndef _WIN32
+bool test_cli_cm_setup_executable_saves_config() {
+    TempDir temp_dir;
+    const auto record_path = temp_dir.path() / "args.txt";
+    const auto fake_tool = write_fake_copernicusmarine(temp_dir.path(), record_path);
+    const auto config_path = temp_dir.path() / "config.toml";
+    ScopedEnvVar cm_bin("OCEANDL_CM_BIN", std::nullopt);
+
+    CliApp app;
+    std::ostringstream out;
+    std::ostringstream err;
+    const auto exit_code = app.run(
+        {"--config", config_path.string(), "cm", "setup", "--executable", fake_tool.string()},
+        out,
+        err
+    );
+
+    const auto config_text = read_text_file(config_path);
+    return expect(exit_code == 0, "cm setup executable exit code")
+        && expect_contains(out.str(), "Verified Copernicus Marine Toolbox", "cm setup verifies version")
+        && expect_contains(out.str(), config_path.string(), "cm setup prints config path")
+        && expect_contains(config_text, "[copernicusmarine]", "cm setup writes config table")
+        && expect_contains(config_text, "runner", "cm setup writes runner key")
+        && expect_contains(config_text, "system", "cm setup writes system runner")
+        && expect_contains(config_text, fake_tool.string(), "cm setup writes executable path")
+        && expect(err.str().empty(), "cm setup executable does not write errors");
+}
+
+bool test_cli_cm_subset_passthrough_with_fake_executable() {
+    TempDir temp_dir;
+    const auto record_path = temp_dir.path() / "subset-args.txt";
+    const auto fake_tool = write_fake_copernicusmarine(temp_dir.path(), record_path);
+    ScopedEnvVar cm_bin("OCEANDL_CM_BIN", fake_tool.string());
+
+    CliApp app;
+    std::ostringstream out;
+    std::ostringstream err;
+    const auto exit_code = app.run(
+        {
+            "--config",
+            (temp_dir.path() / "config.toml").string(),
+            "cm",
+            "subset",
+            "--dataset-id",
+            "cmems_mod_glo_phy_my_0.083deg_P1D-m",
+            "--variable",
+            "so",
+            "--variable",
+            "thetao",
+            "--minimum-longitude",
+            "132.43732068838182",
+            "--label",
+            "value with spaces",
+        },
+        out,
+        err
+    );
+
+    const auto recorded = read_text_file(record_path);
+    return expect(exit_code == 0, "cm subset fake passthrough exit code")
+        && expect_contains(recorded, "subset\n", "cm subset forwarded subcommand")
+        && expect_contains(recorded, "--dataset-id\n", "cm subset forwarded option token")
+        && expect_contains(
+            recorded,
+            "cmems_mod_glo_phy_my_0.083deg_P1D-m\n",
+            "cm subset forwarded dataset id token"
+        )
+        && expect_contains(recorded, "value with spaces\n", "cm subset preserves spaced token")
+        && expect(err.str().empty(), "cm subset fake passthrough does not write errors");
+}
+
+bool test_cli_cm_login_does_not_write_password_to_config() {
+    TempDir temp_dir;
+    const auto record_path = temp_dir.path() / "login-args.txt";
+    const auto fake_tool = write_fake_copernicusmarine(temp_dir.path(), record_path);
+    const auto config_path = temp_dir.path() / "config.toml";
+    ScopedEnvVar cm_bin("OCEANDL_CM_BIN", fake_tool.string());
+
+    CliApp app;
+    std::ostringstream out;
+    std::ostringstream err;
+    const auto exit_code = app.run(
+        {
+            "--config",
+            config_path.string(),
+            "cm",
+            "login",
+            "--username",
+            "fixture-user",
+            "--password",
+            "secret-password",
+        },
+        out,
+        err
+    );
+
+    const auto config_text =
+        std::filesystem::exists(config_path) ? read_text_file(config_path) : std::string();
+    const auto recorded = read_text_file(record_path);
+    return expect(exit_code == 0, "cm login fake passthrough exit code")
+        && expect_contains(recorded, "login\n", "cm login forwarded subcommand")
+        && expect_contains(recorded, "secret-password\n", "cm login forwards args to official tool")
+        && expect(config_text.find("secret-password") == std::string::npos, "cm login password not written to config")
+        && expect(err.str().empty(), "cm login fake passthrough does not write errors");
+}
+#endif
 
 bool test_cli_shows_help_even_when_config_is_invalid() {
     TempDir temp_dir;
@@ -2306,6 +2649,13 @@ int main() {
         {"config_load_rejects_excessive_retry_count", test_config_load_rejects_excessive_retry_count},
         {"config_load_rejects_invalid_url_value", test_config_load_rejects_invalid_url_value},
         {"config_load_reports_unknown_keys", test_config_load_reports_unknown_keys},
+        {"config_loads_copernicusmarine_table", test_config_loads_copernicusmarine_table},
+        {"config_loads_copernicusmarine_micromamba_runner", test_config_loads_copernicusmarine_micromamba_runner},
+        {"config_rejects_invalid_copernicusmarine_type", test_config_rejects_invalid_copernicusmarine_type},
+        {"copernicusmarine_resolver_uses_environment_variable", test_copernicusmarine_resolver_uses_environment_variable},
+        {"copernicusmarine_resolver_uses_config_executable", test_copernicusmarine_resolver_uses_config_executable},
+        {"copernicusmarine_builds_subset_passthrough_args", test_copernicusmarine_builds_subset_passthrough_args},
+        {"copernicusmarine_builds_runner_process_prefix", test_copernicusmarine_builds_runner_process_prefix},
         {"parse_retry_after_seconds_clamps_numeric_header", test_parse_retry_after_seconds_clamps_numeric_header},
         {"catalog_builds_dataset_urls_from_provider_base_url", test_catalog_builds_dataset_urls_from_provider_base_url},
         {"catalog_prefers_legacy_dataset_url_override", test_catalog_prefers_legacy_dataset_url_override},
@@ -2313,6 +2663,15 @@ int main() {
         {"reporter_structures_plain_output_without_color", test_reporter_structures_plain_output_without_color},
         {"cli_shows_global_help_for_help_flag", test_cli_shows_global_help_for_help_flag},
         {"cli_shows_download_help", test_cli_shows_download_help},
+        {"cli_shows_cm_help", test_cli_shows_cm_help},
+        {"cli_shows_help_cm", test_cli_shows_help_cm},
+        {"cli_rejects_unknown_cm_subcommand", test_cli_rejects_unknown_cm_subcommand},
+        {"cli_cm_doctor_reports_missing_tool", test_cli_cm_doctor_reports_missing_tool},
+#ifndef _WIN32
+        {"cli_cm_setup_executable_saves_config", test_cli_cm_setup_executable_saves_config},
+        {"cli_cm_subset_passthrough_with_fake_executable", test_cli_cm_subset_passthrough_with_fake_executable},
+        {"cli_cm_login_does_not_write_password_to_config", test_cli_cm_login_does_not_write_password_to_config},
+#endif
         {"cli_shows_help_even_when_config_is_invalid", test_cli_shows_help_even_when_config_is_invalid},
         {"cli_info_falls_back_when_config_is_invalid", test_cli_info_falls_back_when_config_is_invalid},
         {"cli_rejects_invalid_year_suffix", test_cli_rejects_invalid_year_suffix},

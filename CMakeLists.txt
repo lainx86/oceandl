@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.24)
 
-project(oceandl VERSION 0.2.10 LANGUAGES CXX)
+project(oceandl VERSION 0.3.0 LANGUAGES CXX)
 
 include(GNUInstallDirs)
 include(CTest)
@@ -60,12 +60,14 @@ add_library(oceandl_lib
     cpp/src/cli.cpp
     cpp/src/cli_support.cpp
     cpp/src/config.cpp
+    cpp/src/copernicusmarine.cpp
     cpp/src/download_lock.cpp
     cpp/src/download_command.cpp
     cpp/src/download_resume.cpp
     cpp/src/downloader.cpp
     cpp/src/http_client.cpp
     cpp/src/models.cpp
+    cpp/src/process_runner.cpp
     cpp/src/providers/base.cpp
     cpp/src/providers/psl.cpp
     cpp/src/providers/registry.cpp

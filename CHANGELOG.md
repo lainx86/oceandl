@@ -6,6 +6,13 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-06-29
+
+### Added
+
+- Added alpha `oceandl cm ...` commands as an unofficial wrapper around the official Copernicus Marine Toolbox, including setup, doctor, login, describe, get, and subset forwarding.
+- Added `[copernicusmarine]` config support for system, micromamba, and conda runner metadata without storing Copernicus Marine credentials.
+
 ## [0.2.10] - 2026-05-18
 
 ### Added
