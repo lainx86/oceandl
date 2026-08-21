@@ -2,23 +2,6 @@
 
 `oceandl` is a lightweight C++ CLI for downloading ocean/climate NetCDF datasets from NOAA PSL. The project is still in alpha: the current focus is safe download flow, practical resume behavior, and a codebase that stays simple to extend.
 
-## Alpha status
-
-`oceandl` should currently be read as:
-
-- alpha
-- source-first
-
-What that means in practice:
-
-- The recommended installation path today is Arch Linux via AUR on Arch-based systems, or the Windows `x64` portable archive from GitHub Releases on Windows.
-- GitHub Releases may publish CI-built archives for convenience, but they are still alpha artifacts, not a promise of "stable binary-first" support.
-- Today that public release path is intentionally narrow: the formal source archive used by AUR, plus maintainer-built Linux `x64` and Windows `x64` portable archives.
-- The only first-stage package-manager target maintained in this repository today is the Arch `makepkg` package spec described below.
-- Winget is intentionally not published yet; Windows starts with manual download from GitHub Releases first.
-- Other operating systems and package ecosystems are not maintainer-owned targets right now.
-- Backward compatibility and platform support should be treated as improving, not frozen.
-
 ## Features
 
 - Native C++ CLI with a `CMake` build
